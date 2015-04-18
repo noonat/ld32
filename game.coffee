@@ -151,6 +151,7 @@ class Mutant
 
     @sprite.animations.add('stand', [0], 60, false)
     @sprite.animations.add('walk', [1, 2, 3, 4], 5, true)
+    @sprite.animations.add('punch', [5, 6, 7, 8], 10, true)
     @sprite.animations.play('stand')
 
     @game.physics.enable(@sprite, Phaser.Physics.ARCADE)
@@ -165,8 +166,11 @@ class Mutant
       @sprite.animations.play('walk')
       @sprite.body.velocity.x = @walkSpeed * sign(deltaX)
       @sprite.scale.x = sign(deltaX)
-    else
+    else if abs(deltaX) > 30
       @sprite.animations.play('stand')
+      @sprite.body.velocity.x = 0
+    else
+      @sprite.animations.play('punch')
       @sprite.body.velocity.x = 0
 
 
