@@ -8,6 +8,23 @@ _height = 600
 _game = new Phaser.Game(_width, _height, Phaser.AUTO, 'phaser')
 
 
+abs = (value) ->
+  if value >= 0
+    value
+  else
+    -value
+
+
+sign = (value) ->
+  if value >= 0
+    1
+  else
+    -1
+
+
+# Trigger a breakpoint inside the game file, so the web inspector can be
+# used to debug game variables.
+#
 window.debugGame = -> debugger
 
 
@@ -125,7 +142,7 @@ class Mutant
 
   gravity: 1000
   jumpSpeed: 500
-  walkSpeed: 150
+  walkSpeed: 100
 
   constructor: (@game, x, y) ->
     @sprite = @game.add.sprite(x, y, 'mutant', 0)
@@ -141,6 +158,16 @@ class Mutant
     @sprite.body.gravity.y = @gravity
     @sprite.body.maxVelocity.y = @jumpSpeed
     @sprite.body.setSize(16, 32, 0, 16)
+
+  update: (player) ->
+    deltaX = player.sprite.x - @sprite.x
+    if abs(deltaX) > 100
+      @sprite.animations.play('walk')
+      @sprite.body.velocity.x = @walkSpeed * sign(deltaX)
+      @sprite.scale.x = sign(deltaX)
+    else
+      @sprite.animations.play('stand')
+      @sprite.body.velocity.x = 0
 
 
 _game.state.add 'menu',
@@ -178,12 +205,13 @@ _game.state.add 'play',
     @game.physics.arcade.gravity.y = 300
 
     @player = new Player(@game, @world.width / 2, @game.height - 64)
-    @camera.follow(@player.sprite)
+    @camera.follow(@player.sprite, Phaser.Camera.FOLLOW_PLATFORMER)
 
     @mutant = new Mutant(@game, @world.width / 2 - 100, @game.height - 64)
 
   update: ->
     @player.update(@keys)
+    @mutant.update(@player)
 
 
 window.addEventListener('load', ->
