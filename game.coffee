@@ -122,14 +122,15 @@ class Player
     dirX -= 1 if keys.left.isDown
     dirX += 1 if keys.right.isDown
 
-    if dirX < 0
-      @sprite.animations.play('walk')
+    animation = if dirX < 0
       @sprite.scale.x = -1
+      'walk'
     else if dirX > 0
-      @sprite.animations.play('walk')
       @sprite.scale.x = 1
+      'walk'
     else
-      @sprite.animations.play('stand')
+      'stand'
+    @sprite.animations.play(animation)
     @sprite.body.velocity.x = @walkSpeed * dirX
 
     if ((keys.jump.isDown or keys.up.isDown) and @sprite.body.onFloor() and
@@ -142,16 +143,33 @@ class Mutant
 
   gravity: 1000
   jumpSpeed: 500
+  maxPunchDistance: 15
+  maxPunchWalkDistance: 30
+  maxWalkDistance: 300
+  minThinkDuration: 500
+  maxThinkDuration: 2000
+  punchWalkSpeed: 20
+  punchWalkSpeedRange: 5
+  questionChance: 0.3
+  questionDuration: 2000
   walkSpeed: 100
+  walkSpeedRange: 20
 
   constructor: (@game, x, y) ->
+    @punchWalkSpeed = @punchWalkSpeed - @punchWalkSpeedRange * Math.random()
+    @walkSpeed = @walkSpeed - @walkSpeedRange * Math.random()
+    @thinkTime = 0
+
     @sprite = @game.add.sprite(x, y, 'mutant', 0)
     @sprite.anchor.setTo(0.5, 0.5)
     @sprite.smoothed = false
+    tint = Phaser.Color.HSLtoRGB(0, 0, 0.9 + 0.1 * Math.random())
+    @sprite.tint = Phaser.Color.getColor(tint.r, tint.g, tint.b)
 
     @sprite.animations.add('stand', [0], 60, false)
     @sprite.animations.add('walk', [1, 2, 3, 4], 5, true)
-    @sprite.animations.add('punch', [5, 6, 7, 8], 10, true)
+    @sprite.animations.add('punchWalk', [5, 6, 7, 8], 10, true)
+    @sprite.animations.add('punch', [9, 10, 11, 12], 10, true)
     @sprite.animations.play('stand')
 
     @game.physics.enable(@sprite, Phaser.Physics.ARCADE)
@@ -160,18 +178,47 @@ class Mutant
     @sprite.body.maxVelocity.y = @jumpSpeed
     @sprite.body.setSize(16, 32, 0, 16)
 
-  update: (player) ->
-    deltaX = player.sprite.x - @sprite.x
-    if abs(deltaX) > 100
-      @sprite.animations.play('walk')
-      @sprite.body.velocity.x = @walkSpeed * sign(deltaX)
-      @sprite.scale.x = sign(deltaX)
-    else if abs(deltaX) > 30
-      @sprite.animations.play('stand')
-      @sprite.body.velocity.x = 0
+    @questionSprite = @game.add.sprite(x, y, 'questionMark')
+    @questionSprite.anchor.setTo(0.5, 1)
+    @questionSprite.visible = false
+    @questionTimer = 0
+
+  think: (player) ->
+    absDeltaX = abs(player.sprite.x - @sprite.x)
+    thinkDuration = (@minThinkDuration +
+                     (@maxThinkDuration - @minThinkDuration) * Math.random())
+    @action = if absDeltaX < @maxPunchDistance
+      'punch'
+    else if absDeltaX < @maxPunchWalkDistance
+      thinkDuration = 0
+      'punchWalk'
+    else if absDeltaX < @maxWalkDistance
+      thinkDuration = 0
+      'walk'
     else
-      @sprite.animations.play('punch')
-      @sprite.body.velocity.x = 0
+      if @action != 'stand' and Math.random() < @questionChance
+        @questionTime = @game.time.now + @questionDuration
+      'stand'
+    @sprite.animations.play(@action)
+    @thinkTime = @game.time.now + thinkDuration
+
+  update: (player) ->
+    @think(player) if @game.time.now > @thinkTime
+    deltaX = player.sprite.x - @sprite.x
+    switch @action
+      when 'punch'
+        @sprite.body.velocity.x = 0
+      when 'punchWalk'
+        @sprite.body.velocity.x = @punchWalkSpeed * sign(deltaX)
+        @sprite.scale.x = sign(deltaX)
+      when 'walk'
+        @sprite.body.velocity.x = @walkSpeed * sign(deltaX)
+        @sprite.scale.x = sign(deltaX)
+      when 'stand'
+        @sprite.body.velocity.x = 0
+    if (@questionSprite.visible = @questionTime > @game.time.now)
+      @questionSprite.x = @sprite.x
+      @questionSprite.y = @sprite.y - 5
 
 
 _game.state.add 'menu',
@@ -194,6 +241,7 @@ _game.state.add 'menu',
 _game.state.add 'play',
 
   preload: ->
+    @load.image('questionMark', _scaled['/assets/question_mark.png'])
     @load.image('tiles', _scaled['/assets/tiles.png'])
     @load.spritesheet('player', _scaled['/assets/player.png'], 64, 64)
     @load.spritesheet('mutant', _scaled['/assets/mutant.png'], 64, 64)
@@ -217,19 +265,22 @@ _game.state.add 'play',
     @player = new Player(@game, @world.width / 2, @game.height - 64)
     @camera.follow(@player.sprite, Phaser.Camera.FOLLOW_PLATFORMER)
 
-    @mutant = new Mutant(@game, @world.width / 2 - 100, @game.height - 64)
+    @mutants = (new Mutant(@game, @world.width * Math.random(),
+                           @game.height - 64) for i in [0..5])
 
   update: ->
     @game.physics.arcade.collide(@player.sprite, @layer)
-    @game.physics.arcade.collide(@mutant.sprite, @layer)
     @player.update(@keys)
-    @mutant.update(@player)
+    for mutant in @mutants
+      @game.physics.arcade.collide(mutant.sprite, @layer)
+      mutant.update(@player)
 
 
 window.addEventListener('load', ->
   loadScaledImages([
     '/assets/mutant.png'
     '/assets/player.png'
+    '/assets/question_mark.png'
     '/assets/tiles.png'
   ], -> _game.state.start('play'))
 , false)
