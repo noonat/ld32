@@ -2,16 +2,17 @@
 
 _canvas = document.createElement 'canvas'
 _scale = 4
-_scaledImageUrls = {}
+_scaled = {}
 _width = 900
 _height = 600
 _game = new Phaser.Game(_width, _height, Phaser.AUTO, 'phaser')
 
-PLAYER_JUMP_DURATION = 750
-PLAYER_JUMP_SPEED = 500
-PLAYER_WALK_SPEED = 150
+
+window.debugGame = -> debugger
 
 
+# Load a single image and scale it up
+#
 loadScaledImage = (url, callback, callbackContext) ->
   image = null
 
@@ -53,48 +54,100 @@ loadScaledImage = (url, callback, callbackContext) ->
 
     context.clearRect(0, 0, scaledWidth, scaledHeight)
     context.putImageData(scaledImageData, 0, 0)
-    callback.call(callbackContext, _canvas.toDataURL())
+    callback.call(callbackContext, url, _canvas.toDataURL())
 
   image = document.createElement('img')
   image.onload = onImageLoaded
   image.src = url
 
 
-loadScaledImages = (images, callback, context) ->
-  numImages = images.length
+# Load a list of images and scale them up
+#
+loadScaledImages = (urls, callback, context) ->
+  numImages = urls.length
   numLoadedImages = 0
-  onImageScaled = (url) ->
-    image = this
-    image.scaledUrl = url
+  onImageScaled = (url, scaledUrl) ->
+    _scaled[url] = scaledUrl
     numLoadedImages++
-    if (numLoadedImages >= numImages)
-      callback.call(context, images)
-  for image in images
-    loadScaledImage(image.url, onImageScaled, image)
+    callback.call(context) if numLoadedImages >= numImages
+  for url in urls
+    loadScaledImage(url, onImageScaled)
 
 
-window.addEventListener('load', ->
-  onScaled = (images) ->
-    _scaledImageUrls = {}
-    _scaledImageUrls = {}
-    for image in images
-      _scaledImageUrls[image.key] = image.scaledUrl
-    _game.state.start 'play'
-  loadScaledImages([
-    {
-      key: 'kid'
-      url: '/assets/kid.png'
-    }
-  ], onScaled)
-, false)
+class Player
+
+  gravity: 1000
+  jumpDuration: 750
+  jumpSpeed: 500
+  walkSpeed: 150
+
+  constructor: (@game, x, y) ->
+    @jumpTimer = 0
+
+    @sprite = @game.add.sprite(x, y, 'player', 0)
+    @sprite.anchor.setTo(0.5, 0.5)
+    @sprite.smoothed = false
+
+    @sprite.animations.add('stand', [0], 60, false)
+    @sprite.animations.add('walk', [1, 2, 3, 0], 5, true)
+    @sprite.animations.play('stand')
+
+    @game.physics.enable(@sprite, Phaser.Physics.ARCADE)
+    @sprite.body.collideWorldBounds = true
+    @sprite.body.gravity.y = @gravity
+    @sprite.body.maxVelocity.y = @jumpSpeed
+    @sprite.body.setSize(16, 32, 0, 16)
+
+
+  update: (keys) ->
+    dirX = 0
+    dirY = 0
+    dirX -= 1 if keys.left.isDown
+    dirX += 1 if keys.right.isDown
+
+    if dirX < 0
+      @sprite.animations.play('walk')
+      @sprite.scale.x = -1
+    else if dirX > 0
+      @sprite.animations.play('walk')
+      @sprite.scale.x = 1
+    else
+      @sprite.animations.play('stand')
+    @sprite.body.velocity.x = @walkSpeed * dirX
+
+    if ((keys.jump.isDown or keys.up.isDown) and @sprite.body.onFloor() and
+        @game.time.now > @jumpTimer)
+      @sprite.body.velocity.y = -@jumpSpeed
+      @jumpTimer = @game.time.now + @jumpDuration
+
+
+class Mutant
+
+  gravity: 1000
+  jumpSpeed: 500
+  walkSpeed: 150
+
+  constructor: (@game, x, y) ->
+    @sprite = @game.add.sprite(x, y, 'mutant', 0)
+    @sprite.anchor.setTo(0.5, 0.5)
+    @sprite.smoothed = false
+
+    @sprite.animations.add('stand', [0], 60, false)
+    @sprite.animations.add('walk', [1, 2, 3, 4], 5, true)
+    @sprite.animations.play('stand')
+
+    @game.physics.enable(@sprite, Phaser.Physics.ARCADE)
+    @sprite.body.collideWorldBounds = true
+    @sprite.body.gravity.y = @gravity
+    @sprite.body.maxVelocity.y = @jumpSpeed
+    @sprite.body.setSize(16, 32, 0, 16)
 
 
 _game.state.add 'menu',
-  create: ->
-    @stage.backgroundColor = '#42244d'
 
+  create: ->
     playButtonGraphics = @game.make.graphics(0, 0)
-    playButtonGraphics.beginFill Phaser.Color.getColor(255, 255, 255), 1.0
+    playButtonGraphics.beginFill(Phaser.Color.getColor(255, 255, 255), 1.0)
     playButtonGraphics.drawRect(0, 0, 200, 50)
     playButtonGraphics.endFill()
     playButtonText = @game.make.text(70, 7, 'Play')
@@ -108,47 +161,34 @@ _game.state.add 'menu',
 
 
 _game.state.add 'play',
+
   preload: ->
-    @load.spritesheet('kid', _scaledImageUrls.kid, 64, 64)
+    @load.spritesheet('player', _scaled['/assets/kid.png'], 64, 64)
+    @load.spritesheet('mutant', _scaled['/assets/mutant.png'], 64, 64)
 
   create: ->
+    @stage.backgroundColor = '#42244d'
+    @world.setBounds(0, 0, @game.width * 5, @game.height);
+    @camera.setBoundsToWorld()
+
     @keys = @game.input.keyboard.createCursorKeys()
     @keys.jump = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
 
     @game.physics.startSystem(Phaser.Physics.ARCADE)
     @game.physics.arcade.gravity.y = 300
 
-    @player = @game.add.sprite(0, 0, 'kid', 0)
-    @player.anchor.setTo(0.5, 0.5)
-    @player.jumpTimer = 0
+    @player = new Player(@game, @world.width / 2, @game.height - 64)
+    @camera.follow(@player.sprite)
 
-    @game.physics.enable(@player, Phaser.Physics.ARCADE)
-    @player.body.collideWorldBounds = true
-    @player.body.gravity.y = 1000
-    @player.body.maxVelocity.y = 500
-    @player.body.setSize(20, 32, 5, 16)
-
-    @player.animations.add('stand', [0], 60, false)
-    @player.animations.add('walk', [1, 2, 3, 0], 5, true)
-    @player.animations.play('walk')
+    @mutant = new Mutant(@game, @world.width / 2 - 100, @game.height - 64)
 
   update: ->
-    dirX = 0
-    dirY = 0
-    if @keys.left.isDown
-      dirX -= 1
-    if @keys.right.isDown
-      dirX += 1
-    if dirX < 0
-      @player.animations.play('walk')
-      @player.scale.x = -1
-    else if dirX > 0
-      @player.animations.play('walk')
-      @player.scale.x = 1
-    else
-      @player.animations.play('stand')
-    if (@keys.jump.isDown and @player.body.onFloor() and
-        @game.time.now > @jumpTimer)
-      @player.body.velocity.y = -PLAYER_JUMP_SPEED
-      @player.jumpTimer = @game.time.now + PLAYER_JUMP_DURATION
-    @player.body.velocity.x = PLAYER_WALK_SPEED * dirX
+    @player.update(@keys)
+
+
+window.addEventListener('load', ->
+  loadScaledImages([
+    '/assets/kid.png'
+    '/assets/mutant.png'
+  ], -> _game.state.start('play'))
+, false)
