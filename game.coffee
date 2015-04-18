@@ -190,33 +190,42 @@ _game.state.add 'menu',
 _game.state.add 'play',
 
   preload: ->
-    @load.spritesheet('player', _scaled['/assets/kid.png'], 64, 64)
+    @load.image('tiles', _scaled['/assets/tiles.png'])
+    @load.spritesheet('player', _scaled['/assets/player.png'], 64, 64)
     @load.spritesheet('mutant', _scaled['/assets/mutant.png'], 64, 64)
 
   create: ->
-    @stage.backgroundColor = '#42244d'
-    @world.setBounds(0, 0, @game.width * 5, @game.height);
-    @camera.setBoundsToWorld()
-
-    @keys = @game.input.keyboard.createCursorKeys()
-    @keys.jump = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
+    @stage.backgroundColor = '#dbecff'
 
     @game.physics.startSystem(Phaser.Physics.ARCADE)
     @game.physics.arcade.gravity.y = 300
 
+    @map = new Phaser.Tilemap(@game, null, 32, 32, 60, 20)
+    @map.addTilesetImage('tiles')
+    @layer = @map.createBlankLayer('dirt', 60, 20, 32, 32)
+    @layer.resizeWorld()
+    @camera.setBoundsToWorld()
+    @map.fill(1, 0, 19, 60, 1)
+    @map.setCollision(1)
+
+    @keys = @game.input.keyboard.createCursorKeys()
+    @keys.jump = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
     @player = new Player(@game, @world.width / 2, @game.height - 64)
     @camera.follow(@player.sprite, Phaser.Camera.FOLLOW_PLATFORMER)
 
     @mutant = new Mutant(@game, @world.width / 2 - 100, @game.height - 64)
 
   update: ->
+    @game.physics.arcade.collide(@player.sprite, @layer)
+    @game.physics.arcade.collide(@mutant.sprite, @layer)
     @player.update(@keys)
     @mutant.update(@player)
 
 
 window.addEventListener('load', ->
   loadScaledImages([
-    '/assets/kid.png'
     '/assets/mutant.png'
+    '/assets/player.png'
+    '/assets/tiles.png'
   ], -> _game.state.start('play'))
 , false)
