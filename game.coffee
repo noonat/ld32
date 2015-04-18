@@ -143,11 +143,15 @@ class Mutant
 
   gravity: 1000
   jumpSpeed: 500
+  idleActions: ['stand', 'idleWalk']
+  idleActionDuration: 100
   maxPunchDistance: 15
   maxPunchWalkDistance: 30
   maxWalkDistance: 300
-  minThinkDuration: 500
-  maxThinkDuration: 2000
+  minActionDuration: 500
+  maxActionDuration: 2000
+  minIdleDuration: 500
+  maxIdleDuration: 2000
   punchWalkSpeed: 20
   punchWalkSpeedRange: 5
   questionChance: 0.3
@@ -156,20 +160,25 @@ class Mutant
   walkSpeedRange: 20
 
   constructor: (@game, x, y) ->
-    @punchWalkSpeed = @punchWalkSpeed - @punchWalkSpeedRange * Math.random()
-    @walkSpeed = @walkSpeed - @walkSpeedRange * Math.random()
-    @thinkTime = 0
+    @punchWalkSpeed = @punchWalkSpeed - @game.rnd.between(0, @punchWalkSpeedRange)
+    @walkSpeed = @walkSpeed - @game.rnd.between(0, @walkSpeedRange)
+    @action = 'stand'
+    @actionTarget = null
+    @actionTime = 0
 
     @sprite = @game.add.sprite(x, y, 'mutant', 0)
     @sprite.anchor.setTo(0.5, 0.5)
     @sprite.smoothed = false
-    tint = Phaser.Color.HSLtoRGB(0, 0, 0.9 + 0.1 * Math.random())
+    tint = Phaser.Color.HSLtoRGB(0, 0, @game.rnd.realInRange(0.9, 1.0))
     @sprite.tint = Phaser.Color.getColor(tint.r, tint.g, tint.b)
 
     @sprite.animations.add('stand', [0], 60, false)
     @sprite.animations.add('walk', [1, 2, 3, 4], 5, true)
     @sprite.animations.add('punchWalk', [5, 6, 7, 8], 10, true)
     @sprite.animations.add('punch', [9, 10, 11, 12], 10, true)
+    @sprite.animations.add('idleWalk', [1, 2, 3, 4], 3, true)
+    @sprite.animations.add('idlePunchWalk', [5, 6, 7, 8], 3, true)
+    @sprite.animations.add('idlePunch', [9, 10, 11, 12], 3, true)
     @sprite.animations.play('stand')
 
     @game.physics.enable(@sprite, Phaser.Physics.ARCADE)
@@ -183,27 +192,45 @@ class Mutant
     @questionSprite.visible = false
     @questionTimer = 0
 
-  think: (player) ->
-    absDeltaX = abs(player.sprite.x - @sprite.x)
-    thinkDuration = (@minThinkDuration +
-                     (@maxThinkDuration - @minThinkDuration) * Math.random())
-    @action = if absDeltaX < @maxPunchDistance
+  chooseAction: (player) ->
+    playerDelta = player.sprite.x - @sprite.x
+    playerDistance = abs(playerDelta)
+    newActionDuration = @game.rnd.between(@minActionDuration,
+                                          @maxActionDuration)
+    newAction = if playerDistance < @maxPunchDistance
+      @target = player
       'punch'
-    else if absDeltaX < @maxPunchWalkDistance
-      thinkDuration = 0
+    else if playerDistance < @maxPunchWalkDistance
+      @target = player
+      newActionDuration = 0
       'punchWalk'
-    else if absDeltaX < @maxWalkDistance
-      thinkDuration = 0
+    else if playerDistance < @maxWalkDistance
+      @target = player
+      newActionDuration = 0
       'walk'
-    else
-      if @action != 'stand' and Math.random() < @questionChance
-        @questionTime = @game.time.now + @questionDuration
+    else if @target and @game.rnd.frac() < @questionChance
+      @target = null
+      @questionTime = @game.time.now + @questionDuration
       'stand'
+    else
+      @target = null
+      newActionDuration = @game.rnd.between(500, 1000)
+      random = @game.rnd.frac()
+      if random < 0.1
+        'idleWalk'
+      else if random < 0.15
+        'idlePunchWalk'
+      else if random < 0.20
+        'idlePunch'
+      else
+        @sprite.scale.x = sign(@game.rnd.normal()) if @game.rnd.frac() < 0.1
+        'stand'
+    @action = newAction
+    @actionTime = @game.time.now + newActionDuration
     @sprite.animations.play(@action)
-    @thinkTime = @game.time.now + thinkDuration
 
   update: (player) ->
-    @think(player) if @game.time.now > @thinkTime
+    @chooseAction(player) if @game.time.now > @actionTime
     deltaX = player.sprite.x - @sprite.x
     switch @action
       when 'punch'
@@ -214,6 +241,12 @@ class Mutant
       when 'walk'
         @sprite.body.velocity.x = @walkSpeed * sign(deltaX)
         @sprite.scale.x = sign(deltaX)
+      when 'idlePunch'
+        @sprite.body.velocity.x = 0
+      when 'idlePunchWalk'
+        @sprite.body.velocity.x = 0
+      when 'idleWalk'
+        @sprite.body.velocity.x = @walkSpeed * 0.5 * sign(@sprite.scale.x)
       when 'stand'
         @sprite.body.velocity.x = 0
     if (@questionSprite.visible = @questionTime > @game.time.now)
@@ -265,7 +298,7 @@ _game.state.add 'play',
     @player = new Player(@game, @world.width / 2, @game.height - 64)
     @camera.follow(@player.sprite, Phaser.Camera.FOLLOW_PLATFORMER)
 
-    @mutants = (new Mutant(@game, @world.width * Math.random(),
+    @mutants = (new Mutant(@game, @game.rnd.between(0, @world.width),
                            @game.height - 64) for i in [0..5])
 
   update: ->
