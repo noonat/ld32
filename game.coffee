@@ -273,9 +273,14 @@ _game.state.add 'menu',
 
 _game.state.add 'play',
 
+  farBackgroundScroll: 0.1
+  nearBackgroundScroll: 0.3
+
   preload: ->
     @game.time.advancedTiming = true
+    @load.image('mountains', _scaled['/assets/mountains.png'])
     @load.image('questionMark', _scaled['/assets/question_mark.png'])
+    @load.image('rocks', _scaled['/assets/rocks.png'])
     @load.image('tiles', _scaled['/assets/tiles.png'])
     @load.spritesheet('player', _scaled['/assets/player.png'], 64, 64)
     @load.spritesheet('mutant', _scaled['/assets/mutant.png'], 64, 64)
@@ -294,6 +299,14 @@ _game.state.add 'play',
     @map.fill(1, 0, 19, 60, 1)
     @map.setCollision(1)
 
+    @farBackground = @game.add.tileSprite(0, @game.height - 96 - 32,
+                                          @game.width, 96, 'mountains')
+    @farBackground.fixedToCamera = true
+    @nearBackground = @game.add.tileSprite(0, @game.height - 96 - 32,
+                                           @game.width, 96, 'rocks')
+    @nearBackground.fixedToCamera = true
+    @nearBackground.visible = false
+
     @keys = @game.input.keyboard.createCursorKeys()
     @keys.jump = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
     @player = new Player(@game, @world.width / 2, @game.height - 64)
@@ -306,6 +319,8 @@ _game.state.add 'play',
     @game.debug.text(@game.time.fps or '--', 2, 14, "#00ff00")
 
   update: ->
+    @farBackground.tilePosition.set(@game.camera.x * -@farBackgroundScroll, 0)
+    @nearBackground.tilePosition.set(@game.camera.x * -@nearBackgroundScroll, 0)
     @game.physics.arcade.collide(@player.sprite, @layer)
     @player.update(@keys)
     for mutant in @mutants
@@ -315,9 +330,11 @@ _game.state.add 'play',
 
 window.addEventListener('load', ->
   loadScaledImages([
+    '/assets/mountains.png'
     '/assets/mutant.png'
     '/assets/player.png'
     '/assets/question_mark.png'
+    '/assets/rocks.png'
     '/assets/tiles.png'
   ], -> _game.state.start('play'))
 , false)
