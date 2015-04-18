@@ -4,7 +4,7 @@
   "description": "Ludum Dare 32",
   "main": "game.js",
   "scripts": {
-    "start": "http-server",
+    "start": "http-server & coffee --compile --map --watch *.coffee",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -18,6 +18,7 @@
   },
   "homepage": "https://github.com/noonat/ld32",
   "devDependencies": {
+    "coffee-script": "^1.9.2",
     "http-server": "^0.8.0"
   }
 }
