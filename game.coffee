@@ -274,6 +274,7 @@ _game.state.add 'menu',
 _game.state.add 'play',
 
   preload: ->
+    @game.time.advancedTiming = true
     @load.image('questionMark', _scaled['/assets/question_mark.png'])
     @load.image('tiles', _scaled['/assets/tiles.png'])
     @load.spritesheet('player', _scaled['/assets/player.png'], 64, 64)
@@ -300,6 +301,9 @@ _game.state.add 'play',
 
     @mutants = (new Mutant(@game, @game.rnd.between(0, @world.width),
                            @game.height - 64) for i in [0..5])
+
+  render: ->
+    @game.debug.text(@game.time.fps or '--', 2, 14, "#00ff00")
 
   update: ->
     @game.physics.arcade.collide(@player.sprite, @layer)
