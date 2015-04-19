@@ -336,12 +336,12 @@ class Mutant
       @onKilled(player)
 
   onKilled: (player) ->
+    @action = 'dead'
+    @actionTime = Infinity
     if @game.rnd.frac() < @gibChance
       @gib(player)
       @sprite.kill()
     else
-      @action = 'dead'
-      @actionTime = Infinity
       @sprite.animations.play('dead')
       @sprite.body.bounce.y = @game.rnd.realInRange(@deadBounceRange[0],
                                                     @deadBounceRange[1])
