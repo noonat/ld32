@@ -160,6 +160,8 @@ class Mutant
   walkSpeedRange: 20
 
   constructor: (@game, x, y) ->
+    @health = 3
+
     @punchWalkSpeed = @punchWalkSpeed - @game.rnd.between(0, @punchWalkSpeedRange)
     @walkSpeed = @walkSpeed - @game.rnd.between(0, @walkSpeedRange)
     @action = 'stand'
@@ -169,12 +171,11 @@ class Mutant
     @sprite = @game.add.sprite(x, y, 'mutant', 0)
     @sprite.anchor.setTo(0.5, 0.5)
     @sprite.smoothed = false
-    tint = Phaser.Color.HSLtoRGB(0, 0, @game.rnd.realInRange(0.9, 1.0))
-    @sprite.tint = Phaser.Color.getColor(tint.r, tint.g, tint.b)
 
     @sprite.animations.add('stand', [0], 10, false)
     @sprite.animations.add('flying', [1, 2, 3, 4], 5, false)
     @sprite.animations.add('stunned', [13, 14], 2, true)
+    @sprite.animations.add('dead', [15], 10, false)
     @sprite.animations.add('walk', [1, 2, 3, 4], 5, true)
     @sprite.animations.add('punchWalk', [6, 7, 8, 5], 5, true)
     @sprite.animations.add('punch', [10, 11, 12, 9], 5, true)
@@ -295,15 +296,27 @@ class Mutant
     @sprite.body.velocity.y = -@game.rnd.between(@punchKnockbackYRange[0],
                                                  @punchKnockbackYRange[1])
     @sprite.body.y -= 1
+    @health--
+    if @health <= 0
+      @onKilled(player)
+
+  onKilled: (player) ->
+    @action = 'dead'
+    @actionTime = Infinity
+    @sprite.animations.play('dead')
+    @sprite.body.bounce.y = @game.rnd.realInRange(0, 0.4)
 
   update: (player) ->
-    @startAction(player) if @game.time.now > @actionTime
-    @continueAction(player)
-    if (@questionSprite.visible = @questionTime > @game.time.now)
-      @questionSprite.x = @sprite.x
-      @questionSprite.y = @sprite.y - 5
-    if @tintTimer != null and @tintTimer < @game.time.now
-      @sprite.tint = 0xffffff
+    if @action == 'dead'
+      if abs(@sprite.body.velocity.x) > 0 and @sprite.body.onFloor()
+        @sprite.body.velocity.x *= 0.5
+        @sprite.body.velocity.x = 0 if abs(@sprite.body.velocity.x) < 0.01
+    else
+      @startAction(player) if @game.time.now > @actionTime
+      @continueAction(player)
+      if (@questionSprite.visible = @questionTime > @game.time.now)
+        @questionSprite.x = @sprite.x
+        @questionSprite.y = @sprite.y - 5
 
 
 class Player
@@ -344,7 +357,8 @@ class Player
   isPunching: (mutant) ->
     anim = @sprite.animations.currentAnim.name
     frame = @sprite.animations.currentFrame.index
-    if anim == 'punch' and (frame == 5 or frame == 7)
+    if (anim == 'punch' and (frame == 5 or frame == 7) and
+        mutant.action != 'flying')
       # This is a punching frame, see if the punch sprite is hitting the player
       @game.physics.arcade.overlap @punchSprite, mutant.sprite
     else
