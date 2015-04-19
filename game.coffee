@@ -174,7 +174,7 @@ class Mutant
   idlePunchChance: 0.2
   idleStandTurnChance: 0.1
   idleWalkChance: 0.1
-  jumpSpeed: 500
+  jumpSpeed: 250
   maxPunchDistance: 15
   maxPunchWalkDistance: 30
   maxWalkDistance: 300
@@ -295,6 +295,8 @@ class Mutant
         @sprite.scale.x = sign(deltaX)
       when 'walk'
         @sprite.body.velocity.x = @walkSpeed * sign(deltaX)
+        if @sprite.body.onWall()
+          @sprite.body.velocity.y = -@jumpSpeed
         @sprite.scale.x = sign(deltaX)
       when 'idlePunch'
         @sprite.body.velocity.x = 0
