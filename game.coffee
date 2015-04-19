@@ -263,13 +263,12 @@ class Mutant
 
   onPunched: (player) ->
     playerDirection = sign(player.sprite.x - @sprite.x)
-    if @action != 'flying'
-      @action = 'flying'
-      @actionTime = @game.time.now + 500
-      @sprite.animations.play('flying')
-      @sprite.body.y -= 1
-      @sprite.body.velocity.x = -100
-      @sprite.body.velocity.y = -300
+    @action = 'flying'
+    @actionTime = @game.time.now + 500
+    @sprite.animations.play('flying')
+    @sprite.body.velocity.x = playerDirection * -100
+    @sprite.body.velocity.y = -300
+    @sprite.body.y -= 1
 
   update: (player) ->
     @startAction(player) if @game.time.now > @actionTime
