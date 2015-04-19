@@ -91,52 +91,42 @@ loadScaledImages = (urls, callback, context) ->
     loadScaledImage(url, onImageScaled)
 
 
-class Player
+class EffectsPlugin extends Phaser.Plugin
 
-  gravity: 1000
-  jumpDuration: 750
-  jumpSpeed: 500
-  walkSpeed: 150
+  constructor: (game, parent) ->
+    super(game, parent)
+    @flashGraphics = @game.add.graphics(0, 0)
+    @flashGraphics.beginFill(0xff0000, 0.1)
+    @flashGraphics.drawRect(-50, -50, _width + 100, _height + 100)
+    @flashGraphics.endFill()
+    @flashGraphics.fixedToCamera = true
+    @flashGraphics.visible = false
+    @lastShakeTime = 0
+    @numShakeFrames = 0
 
-  constructor: (@game, x, y) ->
-    @jumpTimer = 0
+  flash: (numFrames, color) ->
+    @numFlashFrames = numFrames
+    @flashGraphics.visible = true
 
-    @sprite = @game.add.sprite(x, y, 'player', 0)
-    @sprite.anchor.setTo(0.5, 0.5)
-    @sprite.smoothed = false
+  shake: (numFrames) ->
+    return if @game.time.now - @lastShakeTime < 200
+    @lastShakeTime = @game.time.now
+    @numShakeFrames = numFrames
+    # window.navigator?.vibrate?(count * 10)
 
-    @sprite.animations.add('stand', [0], 60, false)
-    @sprite.animations.add('walk', [1, 2, 3, 0], 5, true)
-    @sprite.animations.play('stand')
-
-    @game.physics.enable(@sprite, Phaser.Physics.ARCADE)
-    @sprite.body.collideWorldBounds = true
-    @sprite.body.gravity.y = @gravity
-    @sprite.body.maxVelocity.y = @jumpSpeed
-    @sprite.body.setSize(16, 32, 0, 16)
-
-
-  update: (keys) ->
-    dirX = 0
-    dirY = 0
-    dirX -= 1 if keys.left.isDown
-    dirX += 1 if keys.right.isDown
-
-    animation = if dirX < 0
-      @sprite.scale.x = -1
-      'walk'
-    else if dirX > 0
-      @sprite.scale.x = 1
-      'walk'
+  postUpdate: ->
+    if @numShakeFrames > 0
+      @numShakeFrames--
+      @game.time.slowMotion = 2.0
+      @game.camera.displayObject.position.x += @game.rnd.normal()
+      @game.camera.displayObject.position.y += @game.rnd.normal()
     else
-      'stand'
-    @sprite.animations.play(animation)
-    @sprite.body.velocity.x = @walkSpeed * dirX
+      @game.time.slowMotion = 1.0
 
-    if ((keys.jump.isDown or keys.up.isDown) and @sprite.body.onFloor() and
-        @game.time.now > @jumpTimer)
-      @sprite.body.velocity.y = -@jumpSpeed
-      @jumpTimer = @game.time.now + @jumpDuration
+    if @numFlashFrames > 0
+      @numFlashFrames--
+    else
+      @flashGraphics.visible = false
 
 
 class Mutant
@@ -172,7 +162,8 @@ class Mutant
     tint = Phaser.Color.HSLtoRGB(0, 0, @game.rnd.realInRange(0.9, 1.0))
     @sprite.tint = Phaser.Color.getColor(tint.r, tint.g, tint.b)
 
-    @sprite.animations.add('stand', [0], 60, false)
+    @sprite.animations.add('stand', [0], 10, false)
+    @sprite.animations.add('flying', [0], 10, false)
     @sprite.animations.add('walk', [1, 2, 3, 4], 5, true)
     @sprite.animations.add('punchWalk', [5, 6, 7, 8], 10, true)
     @sprite.animations.add('punch', [9, 10, 11, 12], 10, true)
@@ -192,12 +183,22 @@ class Mutant
     @questionSprite.visible = false
     @questionTimer = 0
 
-  chooseAction: (player) ->
+    @punchSprite = @game.add.sprite(10, 0, null)
+    @punchSprite.anchor.setTo(0.5, 0.5)
+    @sprite.addChild(@punchSprite)
+    @game.physics.enable(@punchSprite, Phaser.Physics.ARCADE)
+    @punchSprite.body.allowGravity = false
+    @punchSprite.body.allowRotation = false
+    @punchSprite.body.setSize(24, 32, 0, 16)
+
+  startAction: (player) ->
     playerDelta = player.sprite.x - @sprite.x
     playerDistance = abs(playerDelta)
     newActionDuration = @game.rnd.between(@minActionDuration,
                                           @maxActionDuration)
-    newAction = if playerDistance < @maxPunchDistance
+    newAction = if not @sprite.body.onFloor()
+      'flying'
+    else if playerDistance < @maxPunchDistance
       @target = player
       'punch'
     else if playerDistance < @maxPunchWalkDistance
@@ -229,8 +230,7 @@ class Mutant
     @actionTime = @game.time.now + newActionDuration
     @sprite.animations.play(@action)
 
-  update: (player) ->
-    @chooseAction(player) if @game.time.now > @actionTime
+  continueAction: (player) ->
     deltaX = player.sprite.x - @sprite.x
     switch @action
       when 'punch'
@@ -249,9 +249,118 @@ class Mutant
         @sprite.body.velocity.x = @walkSpeed * 0.5 * sign(@sprite.scale.x)
       when 'stand'
         @sprite.body.velocity.x = 0
+    # player.onPunched(this) if @isPunching(player)
+
+  isPunching: (player) ->
+    anim = @sprite.animations.currentAnim.name
+    frame = @sprite.animations.currentFrame.index
+    if ((anim == 'punch' or anim == 'punchWalk') and
+        (frame == 5 or frame == 7 or frame == 9 or frame == 1))
+      # This is a punching frame, see if the punch sprite is hitting the player
+      @game.physics.arcade.overlap @punchSprite, player.sprite
+    else
+      false
+
+  onPunched: (player) ->
+    playerDirection = sign(player.sprite.x - @sprite.x)
+    if @action != 'flying'
+      @action = 'flying'
+      @actionTime = @game.time.now + 500
+      @sprite.animations.play('flying')
+      @sprite.body.y -= 1
+      @sprite.body.velocity.x = -100
+      @sprite.body.velocity.y = -300
+
+  update: (player) ->
+    @startAction(player) if @game.time.now > @actionTime
+    @continueAction(player)
     if (@questionSprite.visible = @questionTime > @game.time.now)
       @questionSprite.x = @sprite.x
       @questionSprite.y = @sprite.y - 5
+    if @tintTimer != null and @tintTimer < @game.time.now
+      @sprite.tint = 0xffffff
+
+
+class Player
+
+  gravity: 1000
+  jumpDuration: 750
+  jumpSpeed: 500
+  walkSpeed: 150
+
+  constructor: (@game, x, y) ->
+    @jumpTimer = 0
+
+    @sprite = @game.add.sprite(x, y, 'player', 0)
+    @sprite.anchor.setTo(0.5, 0.5)
+    @sprite.smoothed = false
+
+    @sprite.animations.add('stand', [0], 60, false)
+    @sprite.animations.add('walk', [1, 2, 3, 0], 5, true)
+    @sprite.animations.add('punch', [4, 5, 6, 7], 7, true)
+    @sprite.animations.play('stand')
+
+    @game.physics.enable(@sprite, Phaser.Physics.ARCADE)
+    @sprite.body.collideWorldBounds = true
+    @sprite.body.gravity.y = @gravity
+    @sprite.body.maxVelocity.y = @jumpSpeed
+    @sprite.body.setSize(16, 32, 0, 16)
+
+    @punchSprite = @game.add.sprite(10, 0, null)
+    @punchSprite.anchor.setTo(0.5, 0.5)
+    @sprite.addChild(@punchSprite)
+    @game.physics.enable(@punchSprite, Phaser.Physics.ARCADE)
+    @punchSprite.body.allowGravity = false
+    @punchSprite.body.allowRotation = false
+    @punchSprite.body.setSize(24, 32, 0, 16)
+
+    @hurtTimer = null
+
+  isPunching: (mutant) ->
+    anim = @sprite.animations.currentAnim.name
+    frame = @sprite.animations.currentFrame.index
+    if anim == 'punch' and (frame == 5 or frame == 7)
+      # This is a punching frame, see if the punch sprite is hitting the player
+      @game.physics.arcade.overlap @punchSprite, mutant.sprite
+    else
+      false
+
+  onPunched: (mutant) ->
+    @hurtTimer = @game.time.now + 250
+    @game.plugins.effects.flash 4
+    @game.plugins.effects.shake 4
+
+  update: (keys, mutants) ->
+    dirX = 0
+    dirY = 0
+    dirX -= 1 if keys.left.isDown
+    dirX += 1 if keys.right.isDown
+
+    speed = @walkSpeed
+    animation = if keys.fire.isDown
+      speed = 0
+      'punch'
+    else if dirX < 0
+      'walk'
+    else if dirX > 0
+      'walk'
+    else
+      'stand'
+    @sprite.animations.play(animation)
+    @sprite.scale.x = sign(dirX) if dirX
+    @sprite.body.velocity.x = speed * dirX
+
+    if ((keys.jump1.isDown or keys.jump2.isDown or keys.up.isDown) and
+        @game.time.now > @jumpTimer and @sprite.body.onFloor())
+      @sprite.body.velocity.y = -@jumpSpeed
+      @jumpTimer = @game.time.now + @jumpDuration
+
+    if @hurtTimer != null and @hurtTimer < @game.time.now
+      @hurtTimer = null
+      @sprite.tint = 0xffffff
+
+    for mutant in mutants
+      mutant.onPunched(this) if @isPunching(mutant)
 
 
 _game.state.add 'menu',
@@ -282,8 +391,8 @@ _game.state.add 'play',
     @load.image('questionMark', _scaled['/assets/question_mark.png'])
     @load.image('rocks', _scaled['/assets/rocks.png'])
     @load.image('tiles', _scaled['/assets/tiles.png'])
-    @load.spritesheet('player', _scaled['/assets/player.png'], 64, 64)
     @load.spritesheet('mutant', _scaled['/assets/mutant.png'], 64, 64)
+    @load.spritesheet('player', _scaled['/assets/player.png'], 64, 64)
 
   create: ->
     @stage.backgroundColor = '#dbecff'
@@ -293,36 +402,37 @@ _game.state.add 'play',
 
     @map = new Phaser.Tilemap(@game, null, 32, 32, 60, 20)
     @map.addTilesetImage('tiles')
+
     @layer = @map.createBlankLayer('dirt', 60, 20, 32, 32)
     @layer.resizeWorld()
     @camera.setBoundsToWorld()
+
     @map.fill(1, 0, 19, 60, 1)
     @map.setCollision(1)
 
     @farBackground = @game.add.tileSprite(0, @game.height - 96 - 32,
                                           @game.width, 96, 'mountains')
     @farBackground.fixedToCamera = true
-    @nearBackground = @game.add.tileSprite(0, @game.height - 96 - 32,
-                                           @game.width, 96, 'rocks')
-    @nearBackground.fixedToCamera = true
-    @nearBackground.visible = false
 
     @keys = @game.input.keyboard.createCursorKeys()
-    @keys.jump = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
+    @keys.jump1 = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
+    @keys.jump2 = @game.input.keyboard.addKey(Phaser.Keyboard.Z)
+    @keys.fire = @game.input.keyboard.addKey(Phaser.Keyboard.C)
     @player = new Player(@game, @world.width / 2, @game.height - 64)
     @camera.follow(@player.sprite, Phaser.Camera.FOLLOW_PLATFORMER)
 
     @mutants = (new Mutant(@game, @game.rnd.between(0, @world.width),
                            @game.height - 64) for i in [0..5])
 
+    @game.plugins.effects = @game.plugins.add(EffectsPlugin)
+
   render: ->
     @game.debug.text(@game.time.fps or '--', 2, 14, "#00ff00")
 
   update: ->
     @farBackground.tilePosition.set(@game.camera.x * -@farBackgroundScroll, 0)
-    @nearBackground.tilePosition.set(@game.camera.x * -@nearBackgroundScroll, 0)
     @game.physics.arcade.collide(@player.sprite, @layer)
-    @player.update(@keys)
+    @player.update(@keys, @mutants)
     for mutant in @mutants
       @game.physics.arcade.collide(mutant.sprite, @layer)
       mutant.update(@player)
