@@ -249,7 +249,7 @@ class Mutant
         @sprite.body.velocity.x = @walkSpeed * 0.5 * sign(@sprite.scale.x)
       when 'stand'
         @sprite.body.velocity.x = 0
-    # player.onPunched(this) if @isPunching(player)
+    player.onPunched(this) if @isPunching(player)
 
   isPunching: (player) ->
     anim = @sprite.animations.currentAnim.name
