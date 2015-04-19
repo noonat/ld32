@@ -4,7 +4,7 @@ _canvas = document.createElement 'canvas'
 _scale = 4
 _scaled = {}
 _width = 900
-_height = 600
+_height = 500
 _game = new Phaser.Game(_width, _height, Phaser.AUTO, 'phaser')
 
 
@@ -91,6 +91,18 @@ loadScaledImages = (urls, callback, context) ->
     loadScaledImage(url, onImageScaled)
 
 
+class RandomBag
+
+  constructor: (@values) ->
+    @currentValues = []
+
+  pop: ->
+    if @currentValues.length == 0
+      @currentValues = @values.slice()
+      Phaser.ArrayUtils.shuffle(@currentValues)
+    @currentValues.pop()
+
+
 class EffectsPlugin extends Phaser.Plugin
 
   constructor: (game, parent) ->
@@ -140,6 +152,7 @@ class EffectsPlugin extends Phaser.Plugin
 class Mutant
 
   actionDurationRange: [500, 2000]
+  bloodLifespanRange: [5000, 10000]
   deadBounceRange: [0, 0.4]
   deadDrag: 0.5
   deadMinVelocity: 0.01
@@ -156,12 +169,12 @@ class Mutant
   gibVelocityXRange: [100, 300]
   gibVelocityYRange: [100, 300]
   gravity: 1000
-  jumpSpeed: 500
   idleDurationRange: [500, 1000]
   idlePunchWalkChance: 0.15
   idlePunchChance: 0.2
   idleStandTurnChance: 0.1
   idleWalkChance: 0.1
+  jumpSpeed: 500
   maxPunchDistance: 15
   maxPunchWalkDistance: 30
   maxWalkDistance: 300
@@ -339,35 +352,40 @@ class Mutant
     if @action == 'dead'
       y += 15
     gibs = [
-      @game.add.sprite(x, y, 'gibsBones', 0, @groups.gibs)
-      @game.add.sprite(x, y, 'gibsBones', 1, @groups.gibs)
-      @game.add.sprite(x, y, 'gibsBones', 1, @groups.gibs)
-      @game.add.sprite(x, y, 'gibsParticles', 0, @groups.gibs)
-      @game.add.sprite(x, y, 'gibsParticles', 1, @groups.gibs)
+      @game.add.sprite(x, y, 'gibsBones', 0, @groups.gibs.heads)
+      @game.add.sprite(x, y, 'gibsBones', 1, @groups.gibs.bones)
+      @game.add.sprite(x, y, 'gibsBones', 1, @groups.gibs.bones)
+      @game.add.sprite(x, y, 'gibsParticles', 0, @groups.gibs.particles)
+      @game.add.sprite(x, y, 'gibsParticles', 1, @groups.gibs.particles)
     ]
     for i in [0..@game.rnd.between(@gibCountRange[0], @gibCountRange[1])]
       frame = @game.rnd.between(2, 3)
-      gibs.push(@game.add.sprite(x, y, 'gibsParticles', frame, @groups.gibs))
+      bloodGib = @game.add.sprite(x, y, 'gibsParticles', frame,
+                                  @groups.gibs.particles)
+      bloodGib.lifespan = @game.rnd.between(@bloodLifespanRange[0],
+                                            @bloodLifespanRange[1])
+      gibs.push(bloodGib)
     for gib, i in gibs
       gib.anchor.setTo(0.5, 0.5)
       gib.smoothed = false
       @game.physics.enable(gib, Phaser.Physics.ARCADE)
-      gib.body.bounce.y = @game.rnd.realInRange(@gibBounceRange[0],
-                                                @gibBounceRange[1])
-      gib.body.collideWorldBounds = true
-      gib.body.gravity.y = @gravity
-      gib.body.setSize(gib.width, gib.height, 0, 0)
-      gib.body.velocity.x = (@game.rnd.realInRange(@gibVelocityXRange[0],
-                                                   @gibVelocityXRange[1]) *
-                             (if @game.rnd.frac() < 0.5 then -1 else 1))
-      gib.body.drag.x = abs(gib.body.velocity.x)
-      gib.body.velocity.y = -@game.rnd.realInRange(@gibVelocityYRange[0],
-                                                   @gibVelocityYRange[1])
-      gib.body.allowRotation = (i == 1 or i == 2)
-      if gib.body.allowRotation
-        gib.body.angularVelocity = @game.rnd.realInRange(@gibAngularVelocityRange[0],
-                                                         @gibAngularVelocityRange[1])
-        gib.body.angularDrag = abs(gib.body.angularVelocity)
+      body = gib.body
+      body.bounce.y = @game.rnd.realInRange(@gibBounceRange[0],
+                                            @gibBounceRange[1])
+      body.collideWorldBounds = true
+      body.gravity.y = @gravity
+      body.setSize(gib.width, gib.height, 0, 0)
+      body.velocity.x = (@game.rnd.realInRange(@gibVelocityXRange[0],
+                                               @gibVelocityXRange[1]) *
+                         (if @game.rnd.frac() < 0.5 then -1 else 1))
+      body.drag.x = abs(gib.body.velocity.x)
+      body.velocity.y = -@game.rnd.realInRange(@gibVelocityYRange[0],
+                                               @gibVelocityYRange[1])
+      body.allowRotation = (i == 1 or i == 2)
+      if body.allowRotation
+        body.angularVelocity = @game.rnd.realInRange(@gibAngularVelocityRange[0],
+                                                     @gibAngularVelocityRange[1])
+        body.angularDrag = abs(body.angularVelocity)
 
   update: (player) ->
     if @action == 'dead'
@@ -516,9 +534,12 @@ _game.state.add 'play',
                                           @game.width, 96, 'mountains')
     @farBackground.fixedToCamera = true
 
-    @groups =
-      gibs: @game.add.group()
-      mutants: @game.add.group()
+    @groups = {}
+    @groups.gibs = {}
+    @groups.gibs.particles = @game.add.group()
+    @groups.gibs.bones = @game.add.group()
+    @groups.gibs.heads =  @game.add.group()
+    @groups.mutants = @game.add.group()
 
     @stage.backgroundColor = '#dbecff'
 
@@ -526,14 +547,35 @@ _game.state.add 'play',
     @game.physics.arcade.gravity.y = 300
 
     @map = new Phaser.Tilemap(@game, null, 32, 32, 60, 20)
-    @map.addTilesetImage('tiles')
+    @map.addTilesetImage('tiles', 'tiles', 32, 32, 4, 4)
 
     @layer = @map.createBlankLayer('dirt', 60, 20, 32, 32)
     @layer.resizeWorld()
     @camera.setBoundsToWorld()
 
-    @map.fill(1, 0, 19, 60, 1)
-    @map.setCollision(1)
+    dirtBag = new RandomBag([0..15])
+    chance = 0
+    height = 1
+    for x in [0..59]
+      if @game.rnd.frac() < chance
+        chance = 0
+        if height == 1
+          height++
+        else if height == 4
+          height--
+        else
+          height += sign(@game.rnd.normal())
+      chance = Math.min(chance + 0.05, 1.0)
+      for y in [20 - height...20]
+        @map.putTile(dirtBag.pop(), x, y)
+    for i in [0..2]
+      height = @game.rnd.between(1, 1)
+      width = @game.rnd.between(1, 4)
+      startX = @game.rnd.between(i * 20, i * 20 + (20 - width))
+      for y in [(19 - height)...19]
+        for x in [startX...startX + width]
+          @map.putTile(dirtBag.pop(), x, y)
+    @map.setCollisionBetween(0, 16)
 
     @keys = @game.input.keyboard.createCursorKeys()
     @keys.jump1 = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
@@ -548,11 +590,13 @@ _game.state.add 'play',
     @game.plugins.effects = @game.plugins.add(EffectsPlugin)
 
   render: ->
-    @game.debug.text(@game.time.fps or '--', 2, 14, "#00ff00")
+    @game.debug.text(@game.time.fps or '--', 2, 14, "#ffffff")
 
   update: ->
     @farBackground.tilePosition.set(@game.camera.x * -@farBackgroundScroll, 0)
-    @game.physics.arcade.collide(@groups.gibs, @layer)
+    @game.physics.arcade.collide(@groups.gibs.particles, @layer)
+    @game.physics.arcade.collide(@groups.gibs.bones, @layer)
+    @game.physics.arcade.collide(@groups.gibs.heads, @layer)
     @game.physics.arcade.collide(@player.sprite, @layer)
     @player.update(@keys, @mutants)
     @game.physics.arcade.collide(@groups.mutants, @layer)
