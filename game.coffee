@@ -103,6 +103,7 @@ class EffectsPlugin extends Phaser.Plugin
     @flashGraphics.visible = false
     @lastShakeTime = 0
     @numShakeFrames = 0
+    @numSlowMotionFrames = 0
 
   flash: (numFrames, color) ->
     @numFlashFrames = numFrames
@@ -114,19 +115,26 @@ class EffectsPlugin extends Phaser.Plugin
     @numShakeFrames = numFrames
     # window.navigator?.vibrate?(count * 10)
 
-  postUpdate: ->
-    if @numShakeFrames > 0
-      @numShakeFrames--
-      @game.time.slowMotion = 2.0
-      @game.camera.displayObject.position.x += @game.rnd.normal()
-      @game.camera.displayObject.position.y += @game.rnd.normal()
-    else
-      @game.time.slowMotion = 1.0
+  slowMotion: (numFrames, scale) ->
+    @numSlowMotionFrames = numFrames
+    @slowMotionScale = scale
 
+  postUpdate: ->
     if @numFlashFrames > 0
       @numFlashFrames--
     else
       @flashGraphics.visible = false
+
+    if @numShakeFrames > 0
+      @numShakeFrames--
+      @game.camera.displayObject.position.x += @game.rnd.normal()
+      @game.camera.displayObject.position.y += @game.rnd.normal()
+
+    if @numSlowMotionFrames > 0
+      @numSlowMotionFrames--
+      @game.time.slowMotion = @slowMotionScale
+    else
+      @game.time.slowMotion = 1.0
 
 
 class Mutant
@@ -142,6 +150,8 @@ class Mutant
   maxActionDuration: 2000
   minIdleDuration: 500
   maxIdleDuration: 2000
+  punchKnockbackXRange: [50, 150]
+  punchKnockbackYRange: [200, 300]
   punchWalkSpeed: 20
   punchWalkSpeedRange: 5
   questionChance: 0.3
@@ -163,10 +173,11 @@ class Mutant
     @sprite.tint = Phaser.Color.getColor(tint.r, tint.g, tint.b)
 
     @sprite.animations.add('stand', [0], 10, false)
-    @sprite.animations.add('flying', [0], 10, false)
+    @sprite.animations.add('flying', [1, 2, 3, 4], 5, false)
+    @sprite.animations.add('stunned', [13, 14], 2, true)
     @sprite.animations.add('walk', [1, 2, 3, 4], 5, true)
-    @sprite.animations.add('punchWalk', [5, 6, 7, 8], 10, true)
-    @sprite.animations.add('punch', [9, 10, 11, 12], 10, true)
+    @sprite.animations.add('punchWalk', [6, 7, 8, 5], 5, true)
+    @sprite.animations.add('punch', [10, 11, 12, 9], 5, true)
     @sprite.animations.add('idleWalk', [1, 2, 3, 4], 3, true)
     @sprite.animations.add('idlePunchWalk', [5, 6, 7, 8], 3, true)
     @sprite.animations.add('idlePunch', [9, 10, 11, 12], 3, true)
@@ -189,7 +200,7 @@ class Mutant
     @game.physics.enable(@punchSprite, Phaser.Physics.ARCADE)
     @punchSprite.body.allowGravity = false
     @punchSprite.body.allowRotation = false
-    @punchSprite.body.setSize(24, 32, 0, 16)
+    @punchSprite.body.setSize(10, 32, 0, 16)
 
   startAction: (player) ->
     playerDelta = player.sprite.x - @sprite.x
@@ -198,6 +209,14 @@ class Mutant
                                           @maxActionDuration)
     newAction = if not @sprite.body.onFloor()
       'flying'
+    else if @action == 'flying'
+      chance = @game.rnd.frac()
+      if chance < 0.1
+        'punchWalk'
+      else if chance < 0.4
+        'stunned'
+      else
+        'walk'
     else if playerDistance < @maxPunchDistance
       @target = player
       'punch'
@@ -233,6 +252,10 @@ class Mutant
   continueAction: (player) ->
     deltaX = player.sprite.x - @sprite.x
     switch @action
+      when 'flying'
+        @startAction(player) if @sprite.body.onFloor()
+      when 'stunned'
+        @sprite.body.velocity.x = 0
       when 'punch'
         @sprite.body.velocity.x = 0
       when 'punchWalk'
@@ -254,8 +277,8 @@ class Mutant
   isPunching: (player) ->
     anim = @sprite.animations.currentAnim.name
     frame = @sprite.animations.currentFrame.index
-    if ((anim == 'punch' or anim == 'punchWalk') and
-        (frame == 5 or frame == 7 or frame == 9 or frame == 1))
+    if ((anim == 'punch' and (frame == 9 or frame == 1)) or
+        (anim == 'punchWalk' and (frame == 5 or frame == 7)))
       # This is a punching frame, see if the punch sprite is hitting the player
       @game.physics.arcade.overlap @punchSprite, player.sprite
     else
@@ -266,8 +289,11 @@ class Mutant
     @action = 'flying'
     @actionTime = @game.time.now + 500
     @sprite.animations.play('flying')
-    @sprite.body.velocity.x = playerDirection * -100
-    @sprite.body.velocity.y = -300
+    @sprite.body.velocity.x = (-playerDirection *
+                               @game.rnd.between(@punchKnockbackXRange[0],
+                                                 @punchKnockbackXRange[1]))
+    @sprite.body.velocity.y = -@game.rnd.between(@punchKnockbackYRange[0],
+                                                 @punchKnockbackYRange[1])
     @sprite.body.y -= 1
 
   update: (player) ->
@@ -326,8 +352,9 @@ class Player
 
   onPunched: (mutant) ->
     @hurtTimer = @game.time.now + 250
-    @game.plugins.effects.flash 4
+    @game.plugins.effects.flash 10
     @game.plugins.effects.shake 4
+    @game.plugins.effects.slowMotion 10, 2.0
 
   update: (keys, mutants) ->
     dirX = 0
