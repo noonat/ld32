@@ -139,28 +139,45 @@ class EffectsPlugin extends Phaser.Plugin
 
 class Mutant
 
+  actionDurationRange: [500, 2000]
+  deadBounceRange: [0, 0.4]
+  deadDrag: 0.5
+  deadMinVelocity: 0.01
+  flyingDuration: 500
+  flyingPunchWalkChance: 0.1
+  flyingStunnedChance: 0.4
+  gibAngularVelocityRange: [-100, 100]
+  gibBounceRange: [0, 0.5]
+  gibCountRange: [4, 10]
+  gibChance: 0.2
+  gibShakeFrames: 4
+  gibSlowMotionFrames: 5
+  gibSlowMotionScale: 2.0
+  gibVelocityXRange: [100, 300]
+  gibVelocityYRange: [100, 300]
   gravity: 1000
   jumpSpeed: 500
-  idleActions: ['stand', 'idleWalk']
-  idleActionDuration: 100
+  idleDurationRange: [500, 1000]
+  idlePunchWalkChance: 0.15
+  idlePunchChance: 0.2
+  idleStandTurnChance: 0.1
+  idleWalkChance: 0.1
   maxPunchDistance: 15
   maxPunchWalkDistance: 30
   maxWalkDistance: 300
-  minActionDuration: 500
-  maxActionDuration: 2000
-  minIdleDuration: 500
-  maxIdleDuration: 2000
   punchKnockbackXRange: [50, 150]
   punchKnockbackYRange: [200, 300]
   punchWalkSpeed: 20
   punchWalkSpeedRange: 5
   questionChance: 0.3
   questionDuration: 2000
+  questionSpriteOffset: 5
   walkSpeed: 100
   walkSpeedRange: 20
 
-  constructor: (@game, x, y) ->
+  constructor: (@game, x, y, groups) ->
     @health = 3
+    @groups = groups
 
     @punchWalkSpeed = @punchWalkSpeed - @game.rnd.between(0, @punchWalkSpeedRange)
     @walkSpeed = @walkSpeed - @game.rnd.between(0, @walkSpeedRange)
@@ -168,7 +185,7 @@ class Mutant
     @actionTarget = null
     @actionTime = 0
 
-    @sprite = @game.add.sprite(x, y, 'mutant', 0)
+    @sprite = @game.add.sprite(x, y, 'mutant', 0, @groups.mutants)
     @sprite.anchor.setTo(0.5, 0.5)
     @sprite.smoothed = false
 
@@ -206,15 +223,15 @@ class Mutant
   startAction: (player) ->
     playerDelta = player.sprite.x - @sprite.x
     playerDistance = abs(playerDelta)
-    newActionDuration = @game.rnd.between(@minActionDuration,
-                                          @maxActionDuration)
-    newAction = if not @sprite.body.onFloor()
+    newActionDuration = @game.rnd.between(@actionDurationRange[0],
+                                          @actionDurationRange[1])
+    newAction = if @action == 'flying' and not @sprite.body.onFloor()
       'flying'
     else if @action == 'flying'
       chance = @game.rnd.frac()
-      if chance < 0.1
+      if chance < @flyingPunchWalkChance
         'punchWalk'
-      else if chance < 0.4
+      else if chance < @flyingStunnedChance
         'stunned'
       else
         'walk'
@@ -235,16 +252,17 @@ class Mutant
       'stand'
     else
       @target = null
-      newActionDuration = @game.rnd.between(500, 1000)
-      random = @game.rnd.frac()
-      if random < 0.1
+      newActionDuration = @game.rnd.between(@idleDurationRange[0],
+                                            @idleDurationRange[1])
+      chance = @game.rnd.frac()
+      if chance < @idleWalkChance
         'idleWalk'
-      else if random < 0.15
+      else if chance < @idlePunchWalkChance
         'idlePunchWalk'
-      else if random < 0.20
+      else if chance < @idlePunchChance
         'idlePunch'
       else
-        @sprite.scale.x = sign(@game.rnd.normal()) if @game.rnd.frac() < 0.1
+        @sprite.scale.x = sign(@game.rnd.normal()) if @game.rnd.frac() < @idleStandTurnChance
         'stand'
     @action = newAction
     @actionTime = @game.time.now + newActionDuration
@@ -286,10 +304,8 @@ class Mutant
       false
 
   onPunched: (player) ->
+    @logging = true
     playerDirection = sign(player.sprite.x - @sprite.x)
-    @action = 'flying'
-    @actionTime = @game.time.now + 500
-    @sprite.animations.play('flying')
     @sprite.body.velocity.x = (-playerDirection *
                                @game.rnd.between(@punchKnockbackXRange[0],
                                                  @punchKnockbackXRange[1]))
@@ -297,31 +313,84 @@ class Mutant
                                                  @punchKnockbackYRange[1])
     @sprite.body.y -= 1
     @health--
-    if @health <= 0
+    if @health > 0
+      @action = 'flying'
+      @actionTime = @game.time.now + @flyingDuration
+      @sprite.animations.play('flying')
+    else
       @onKilled(player)
 
   onKilled: (player) ->
-    @action = 'dead'
-    @actionTime = Infinity
-    @sprite.animations.play('dead')
-    @sprite.body.bounce.y = @game.rnd.realInRange(0, 0.4)
+    if @game.rnd.frac() < @gibChance
+      @gib(player)
+      @sprite.kill()
+    else
+      @action = 'dead'
+      @actionTime = Infinity
+      @sprite.animations.play('dead')
+      @sprite.body.bounce.y = @game.rnd.realInRange(@deadBounceRange[0],
+                                                    @deadBounceRange[1])
+
+  gib: (player) ->
+    @game.plugins.effects.shake @gibShakeFrames
+    @game.plugins.effects.slowMotion @gibSlowMotionFrames, @gibSlowMotionScale
+    x = @sprite.x
+    y = @sprite.y + 10
+    if @action == 'dead'
+      y += 15
+    gibs = [
+      @game.add.sprite(x, y, 'gibsBones', 0, @groups.gibs)
+      @game.add.sprite(x, y, 'gibsBones', 1, @groups.gibs)
+      @game.add.sprite(x, y, 'gibsBones', 1, @groups.gibs)
+      @game.add.sprite(x, y, 'gibsParticles', 0, @groups.gibs)
+      @game.add.sprite(x, y, 'gibsParticles', 1, @groups.gibs)
+    ]
+    for i in [0..@game.rnd.between(@gibCountRange[0], @gibCountRange[1])]
+      frame = @game.rnd.between(2, 3)
+      gibs.push(@game.add.sprite(x, y, 'gibsParticles', frame, @groups.gibs))
+    for gib, i in gibs
+      gib.anchor.setTo(0.5, 0.5)
+      gib.smoothed = false
+      @game.physics.enable(gib, Phaser.Physics.ARCADE)
+      gib.body.bounce.y = @game.rnd.realInRange(@gibBounceRange[0],
+                                                @gibBounceRange[1])
+      gib.body.collideWorldBounds = true
+      gib.body.gravity.y = @gravity
+      gib.body.setSize(gib.width, gib.height, 0, 0)
+      gib.body.velocity.x = (@game.rnd.realInRange(@gibVelocityXRange[0],
+                                                   @gibVelocityXRange[1]) *
+                             (if @game.rnd.frac() < 0.5 then -1 else 1))
+      gib.body.drag.x = abs(gib.body.velocity.x)
+      gib.body.velocity.y = -@game.rnd.realInRange(@gibVelocityYRange[0],
+                                                   @gibVelocityYRange[1])
+      gib.body.allowRotation = (i == 1 or i == 2)
+      if gib.body.allowRotation
+        gib.body.angularVelocity = @game.rnd.realInRange(@gibAngularVelocityRange[0],
+                                                         @gibAngularVelocityRange[1])
+        gib.body.angularDrag = abs(gib.body.angularVelocity)
 
   update: (player) ->
     if @action == 'dead'
       if abs(@sprite.body.velocity.x) > 0 and @sprite.body.onFloor()
-        @sprite.body.velocity.x *= 0.5
-        @sprite.body.velocity.x = 0 if abs(@sprite.body.velocity.x) < 0.01
+        @sprite.body.velocity.x *= @deadDrag
+        if abs(@sprite.body.velocity.x) < @deadMinVelocity
+          @sprite.body.velocity.x = 0
     else
       @startAction(player) if @game.time.now > @actionTime
       @continueAction(player)
       if (@questionSprite.visible = @questionTime > @game.time.now)
         @questionSprite.x = @sprite.x
-        @questionSprite.y = @sprite.y - 5
+        @questionSprite.y = @sprite.y - @questionSpriteOffset
 
 
 class Player
 
   gravity: 1000
+  hurtDuration: 250
+  hurtFlashFrames: 10
+  hurtShakeFrames: 4
+  hurtSlowMotionFrames: 10
+  hurtSlowMotionScale: 2.0
   jumpDuration: 750
   jumpSpeed: 500
   walkSpeed: 150
@@ -354,21 +423,22 @@ class Player
 
     @hurtTimer = null
 
-  isPunching: (mutant) ->
+  isPunching: ->
     anim = @sprite.animations.currentAnim.name
     frame = @sprite.animations.currentFrame.index
-    if (anim == 'punch' and (frame == 5 or frame == 7) and
-        mutant.action != 'flying')
-      # This is a punching frame, see if the punch sprite is hitting the player
-      @game.physics.arcade.overlap @punchSprite, mutant.sprite
+    if anim == 'punch' and (frame == 5 or frame == 7)
+      unless @wasPunching
+        @wasPunching = true
+      else
+        false
     else
-      false
+      @wasPunching = false
 
   onPunched: (mutant) ->
-    @hurtTimer = @game.time.now + 250
-    @game.plugins.effects.flash 10
-    @game.plugins.effects.shake 4
-    @game.plugins.effects.slowMotion 10, 2.0
+    @hurtTimer = @game.time.now + @hurtDuration
+    @game.plugins.effects.flash @hurtFlashFrames
+    @game.plugins.effects.shake @hurtShakeFrames
+    @game.plugins.effects.slowMotion @hurtSlowMotionFrames, @hurtSlowMotionScale
 
   update: (keys, mutants) ->
     dirX = 0
@@ -399,8 +469,11 @@ class Player
       @hurtTimer = null
       @sprite.tint = 0xffffff
 
-    for mutant in mutants
-      mutant.onPunched(this) if @isPunching(mutant)
+    if @isPunching()
+      for mutant in mutants
+        if (mutant.action != 'flying' and
+            @game.physics.arcade.overlap(@punchSprite, mutant.sprite))
+          mutant.onPunched(this)
 
 
 _game.state.add 'menu',
@@ -431,10 +504,22 @@ _game.state.add 'play',
     @load.image('questionMark', _scaled['/assets/question_mark.png'])
     @load.image('rocks', _scaled['/assets/rocks.png'])
     @load.image('tiles', _scaled['/assets/tiles.png'])
+    @load.spritesheet('gibsBones', _scaled['/assets/gibs_bones.png'],
+                      20, 16, -1, 4, 4)
+    @load.spritesheet('gibsParticles', _scaled['/assets/gibs_particles.png'],
+                      4, 4, -1, 4, 4)
     @load.spritesheet('mutant', _scaled['/assets/mutant.png'], 64, 64)
     @load.spritesheet('player', _scaled['/assets/player.png'], 64, 64)
 
   create: ->
+    @farBackground = @game.add.tileSprite(0, @game.height - 96 - 32,
+                                          @game.width, 96, 'mountains')
+    @farBackground.fixedToCamera = true
+
+    @groups =
+      gibs: @game.add.group()
+      mutants: @game.add.group()
+
     @stage.backgroundColor = '#dbecff'
 
     @game.physics.startSystem(Phaser.Physics.ARCADE)
@@ -450,10 +535,6 @@ _game.state.add 'play',
     @map.fill(1, 0, 19, 60, 1)
     @map.setCollision(1)
 
-    @farBackground = @game.add.tileSprite(0, @game.height - 96 - 32,
-                                          @game.width, 96, 'mountains')
-    @farBackground.fixedToCamera = true
-
     @keys = @game.input.keyboard.createCursorKeys()
     @keys.jump1 = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
     @keys.jump2 = @game.input.keyboard.addKey(Phaser.Keyboard.Z)
@@ -462,7 +543,7 @@ _game.state.add 'play',
     @camera.follow(@player.sprite, Phaser.Camera.FOLLOW_PLATFORMER)
 
     @mutants = (new Mutant(@game, @game.rnd.between(0, @world.width),
-                           @game.height - 64) for i in [0..5])
+                           @game.height - 64, @groups) for i in [0..5])
 
     @game.plugins.effects = @game.plugins.add(EffectsPlugin)
 
@@ -471,15 +552,18 @@ _game.state.add 'play',
 
   update: ->
     @farBackground.tilePosition.set(@game.camera.x * -@farBackgroundScroll, 0)
+    @game.physics.arcade.collide(@groups.gibs, @layer)
     @game.physics.arcade.collide(@player.sprite, @layer)
     @player.update(@keys, @mutants)
+    @game.physics.arcade.collide(@groups.mutants, @layer)
     for mutant in @mutants
-      @game.physics.arcade.collide(mutant.sprite, @layer)
       mutant.update(@player)
 
 
 window.addEventListener('load', ->
   loadScaledImages([
+    '/assets/gibs_bones.png'
+    '/assets/gibs_particles.png'
     '/assets/mountains.png'
     '/assets/mutant.png'
     '/assets/player.png'
