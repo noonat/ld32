@@ -91,6 +91,9 @@ loadScaledImages = (urls, callback, context) ->
     loadScaledImage(url, onImageScaled)
 
 
+# Allows you to call pop() forever to continuously loop over shuffled versions
+# of the passed array.
+#
 class RandomBag
 
   constructor: (@values) ->
@@ -103,6 +106,8 @@ class RandomBag
     @currentValues.pop()
 
 
+# Phaser plugin to provide some special effects to things.
+#
 class EffectsPlugin extends Phaser.Plugin
 
   constructor: (game, parent) ->
@@ -110,9 +115,6 @@ class EffectsPlugin extends Phaser.Plugin
     @flashGraphics = @game.add.graphics(0, 0)
     @game.groups.effects.add(@flashGraphics)
     @game.groups.explosions.createMultiple(10)
-    @flashGraphics.beginFill(0xff0000, 0.1)
-    @flashGraphics.drawRect(-50, -50, _width + 100, _height + 100)
-    @flashGraphics.endFill()
     @flashGraphics.fixedToCamera = true
     @flashGraphics.visible = false
     @lastShakeTime = 0
@@ -120,15 +122,22 @@ class EffectsPlugin extends Phaser.Plugin
     @numSlowMotionFrames = 0
     @shakeAmount = 0
 
+  # Create an explosion sprite at the given position.
   explode: (x, y) ->
     explosion = @game.groups.explosions.getFirstExists(false)
     if explosion
       explosion.reset(x, y)
 
-  flash: (numFrames, color) ->
+  # Create a tinted flash on the screen.
+  flash: (numFrames, color=0xff0000) ->
     @numFlashFrames = numFrames
+    @flashGraphics.clear()
+    @flashGraphics.beginFill(color, 0.1)
+    @flashGraphics.drawRect(-50, -50, _width + 100, _height + 100)
+    @flashGraphics.endFill()
     @flashGraphics.visible = true
 
+  # Shake the camera around for a couple frames.
   shake: (numFrames, amount) ->
     return if @game.time.now - @lastShakeTime < 200
     @lastShakeTime = @game.time.now
@@ -136,6 +145,7 @@ class EffectsPlugin extends Phaser.Plugin
     @shakeAmount = amount or 1
     # window.navigator?.vibrate?(count * 10)
 
+  # Make things run in slow motion for a couple frames.
   slowMotion: (numFrames, scale) ->
     @numSlowMotionFrames = numFrames
     @slowMotionScale = scale
@@ -158,7 +168,12 @@ class EffectsPlugin extends Phaser.Plugin
       @game.time.slowMotion = 1.0
 
 
+# This is an exploding barrel entity. When punched, it blows up and gibs any
+# mutants nearby.
+#
 class Barrel extends Phaser.Sprite
+
+  maxExplodeDistance: 128
 
   constructor: (game, x, y) ->
     super(game, x, y, 'barrel', 3)
@@ -173,23 +188,33 @@ class Barrel extends Phaser.Sprite
     @body.immovable = true
     @body.setSize(12, 24, 0, 0)
 
+  # Called by PlayerBrain when the player punches a barrel.
   explode: ->
+    # Gib any mutants that are close enough.
     @game.groups.mutants.forEachAlive((mutant) ->
+      # FIXME: Phaser must have a way to check distance.
       deltaX = @x - mutant.x
       deltaY = @y - mutant.y
       distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY)
-      if distance < 32 * 4
+      if distance < @maxExplodeDistance
+        # FIXME: MutantBrain should take care of these.
         mutant.brain.action = 'dead'
         mutant.brain.actionTime = Infinity
         mutant.brain.gib()
         mutant.kill()
     , this, true)
+
+    # Knock back any players who are close enough.
     @game.groups.players.forEachAlive((player) ->
       deltaX = @x - player.x
       deltaY = @y - player.y
       distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY)
-      player.body.velocity.y = -300 if distance < 32 * 4
+      # FIXME: Horizontal knockback doens't work because PlayerBrain
+      # resets velocity.x to 0 every frame.
+      player.body.velocity.y = -300 if distance < @maxExplodeDistance
     , this, true)
+
+    # Explode the barrel and create some gibs.
     @game.plugins.effects.explode(@x, @y - 16)
     for i in [0..8]
       gib = @game.groups.gibs.barrel.getFirstExists(false)
@@ -201,12 +226,15 @@ class Barrel extends Phaser.Sprite
 
   update: ->
     super
+    # Make the barrel play a drip animation every once in a while.
     if @nextDripTime < @game.time.now
       @nextDripTime = @game.time.now + @game.rnd.between(0, 10000)
       @animations.stop(null, true)
       @animations.play('drip')
 
 
+# Base class for gibs. Other classes override this to custom their appearance.
+#
 class Gib extends Phaser.Sprite
 
   angularVelocityRange: [-100, 100]
@@ -236,6 +264,8 @@ class Gib extends Phaser.Sprite
     @body.angularDrag = abs(@body.angularVelocity)
 
 
+# A metallic piece of a barrel.
+#
 class BarrelGib extends Gib
 
   constructor: (game, x, y) ->
@@ -245,6 +275,8 @@ class BarrelGib extends Gib
     @body.setSize(@scale.x, @scale.y)
 
 
+# A green piece of barrel goo.
+#
 class BarrelWasteGib extends Gib
 
   constructor: (game, x, y) ->
@@ -255,6 +287,9 @@ class BarrelWasteGib extends Gib
     @body.allowRotation = true
 
 
+# An explosion sprite. This is just visual, it doesn't actually do anything
+# to things in the world.
+#
 class Explosion extends Phaser.Sprite
 
   constructor: (game, @baseX, @baseY) ->
@@ -281,7 +316,42 @@ class Explosion extends Phaser.Sprite
     @y = Math.round(@baseY + @game.rnd.normal() * 5)
 
 
-class Mutant
+# Muties! Kill em all!
+#
+class Mutant extends Phaser.Sprite
+
+  constructor: (game, x, y) ->
+    super(game, x, y, 'mutant', 0)
+
+    @anchor.setTo(0.5, 0.5)
+    @smoothed = false
+
+    @animations.add('stand', [0], 10, false)
+    @animations.add('flying', [1, 2, 3, 4], 5, false)
+    @animations.add('stunned', [13, 14], 2, true)
+    @animations.add('dead', [15], 10, false)
+    @animations.add('walk', [1, 2, 3, 4], 5, true)
+    @animations.add('punchWalk', [6, 7, 8, 5], 5, true)
+    @animations.add('punch', [10, 11, 12, 9], 5, true)
+    @animations.add('idleWalk', [1, 2, 3, 4], 3, true)
+    @animations.add('idlePunchWalk', [5, 6, 7, 8], 3, true)
+    @animations.add('idlePunch', [9, 10, 11, 12], 3, true)
+    @animations.play('stand')
+
+    @game.physics.enable(this, Phaser.Physics.ARCADE)
+    @body.collideWorldBounds = true
+    @body.setSize(16, 32, 0, 16)
+
+    @brain = new MutantBrain(@game, this)
+
+  update: ->
+    super
+    @brain.update()
+
+
+# The logic behind a mutant sprite.
+#
+class MutantBrain
 
   actionDurationRange: [500, 2000]
   bloodLifespanRange: [5000, 10000]
@@ -312,61 +382,40 @@ class Mutant
   maxWalkDistance: 300
   punchKnockbackXRange: [50, 150]
   punchKnockbackYRange: [200, 300]
-  punchWalkSpeed: 20
-  punchWalkSpeedRange: 5
+  punchWalkSpeedRange: [15, 20]
   questionChance: 0.3
   questionDuration: 2000
   questionSpriteOffset: 5
-  walkSpeed: 100
-  walkSpeedRange: 20
+  walkSpeedRange: [80, 100]
 
-  constructor: (@game, x, y) ->
-    @health = 3
+  constructor: (@game, @sprite) ->
+    @sprite.body.gravity.y = @gravity
+    @sprite.body.maxVelocity.y = @jumpSpeed
 
-    @punchWalkSpeed = @punchWalkSpeed - @game.rnd.between(0, @punchWalkSpeedRange)
-    @walkSpeed = @walkSpeed - @game.rnd.between(0, @walkSpeedRange)
     @action = 'stand'
     @actionTarget = null
     @actionTime = 0
+    @health = 3
+    @punchWalkSpeed = @game.rnd.between(@punchWalkSpeedRange[0],
+                                        @punchWalkSpeedRange[1])
+    @walkSpeed = @game.rnd.between(@walkSpeedRange[0], @walkSpeedRange[1])
 
-    @sprite = @game.add.sprite(x, y, 'mutant', 0, @game.groups.mutants)
-    @sprite.brain = this
-    @sprite.anchor.setTo(0.5, 0.5)
-    @sprite.smoothed = false
-
-    @sprite.animations.add('stand', [0], 10, false)
-    @sprite.animations.add('flying', [1, 2, 3, 4], 5, false)
-    @sprite.animations.add('stunned', [13, 14], 2, true)
-    @sprite.animations.add('dead', [15], 10, false)
-    @sprite.animations.add('walk', [1, 2, 3, 4], 5, true)
-    @sprite.animations.add('punchWalk', [6, 7, 8, 5], 5, true)
-    @sprite.animations.add('punch', [10, 11, 12, 9], 5, true)
-    @sprite.animations.add('idleWalk', [1, 2, 3, 4], 3, true)
-    @sprite.animations.add('idlePunchWalk', [5, 6, 7, 8], 3, true)
-    @sprite.animations.add('idlePunch', [9, 10, 11, 12], 3, true)
-    @sprite.animations.play('stand')
-
-    @game.physics.enable(@sprite, Phaser.Physics.ARCADE)
-    @sprite.body.collideWorldBounds = true
-    @sprite.body.gravity.y = @gravity
-    @sprite.body.maxVelocity.y = @jumpSpeed
-    @sprite.body.setSize(16, 32, 0, 16)
-
-    @questionSprite = @game.add.sprite(x, y, 'questionMark')
+    @questionSprite = @game.add.sprite(@sprite.x, @sprite.y, 'questionMark')
     @questionSprite.anchor.setTo(0.5, 1)
     @questionSprite.visible = false
     @questionTimer = 0
 
     @punchSprite = @game.add.sprite(10, 0, null)
     @punchSprite.anchor.setTo(0.5, 0.5)
-    @sprite.addChild(@punchSprite)
     @game.physics.enable(@punchSprite, Phaser.Physics.ARCADE)
     @punchSprite.body.allowGravity = false
     @punchSprite.body.allowRotation = false
     @punchSprite.body.setSize(10, 32, 0, 16)
+    @sprite.addChild(@punchSprite)
 
+  # Called when the mutant wants to start a new action.
   startAction: (player) ->
-    playerDelta = player.sprite.x - @sprite.x
+    playerDelta = player.x - @sprite.x
     playerDistance = abs(playerDelta)
     newActionDuration = @game.rnd.between(@actionDurationRange[0],
                                           @actionDurationRange[1])
@@ -413,8 +462,9 @@ class Mutant
     @actionTime = @game.time.now + newActionDuration
     @sprite.animations.play(@action)
 
+  # Called each frame to continue the action the mutant is currently taking.
   continueAction: (player) ->
-    deltaX = player.sprite.x - @sprite.x
+    deltaX = player.x - @sprite.x
     switch @action
       when 'flying'
         @startAction(player) if @sprite.body.onFloor()
@@ -438,21 +488,22 @@ class Mutant
         @sprite.body.velocity.x = @walkSpeed * 0.5 * sign(@sprite.scale.x)
       when 'stand'
         @sprite.body.velocity.x = 0
-    player.onPunched(this) if @isPunching(player)
+    player.brain.onPunched(this) if @isPunching(player)
 
+  # Returns true if the mutant should cause punch damage to the player.
   isPunching: (player) ->
     anim = @sprite.animations.currentAnim.name
     frame = @sprite.animations.currentFrame.index
     if ((anim == 'punch' and (frame == 9 or frame == 1)) or
         (anim == 'punchWalk' and (frame == 5 or frame == 7)))
       # This is a punching frame, see if the punch sprite is hitting the player
-      @game.physics.arcade.overlap @punchSprite, player.sprite
+      @game.physics.arcade.overlap @punchSprite, player
     else
       false
 
+  # Called when a player punches this mutant.
   onPunched: (player) ->
-    @logging = true
-    playerDirection = sign(player.sprite.x - @sprite.x)
+    playerDirection = sign(player.x - @sprite.x)
     @sprite.body.velocity.x = (-playerDirection *
                                @game.rnd.between(@punchKnockbackXRange[0],
                                                  @punchKnockbackXRange[1]))
@@ -467,6 +518,7 @@ class Mutant
     else
       @onKilled(player)
 
+  # Called when this mutant has been killed.
   onKilled: (player) ->
     @action = 'dead'
     @actionTime = Infinity
@@ -478,6 +530,7 @@ class Mutant
       @sprite.body.bounce.y = @game.rnd.realInRange(@deadBounceRange[0],
                                                     @deadBounceRange[1])
 
+  # Called when we want to gib the mutant (or its dead body).
   gib: (player) ->
     @game.plugins.effects.shake @gibShakeFrames
     @game.plugins.effects.slowMotion @gibSlowMotionFrames, @gibSlowMotionScale
@@ -521,7 +574,9 @@ class Mutant
                                                      @gibAngularVelocityRange[1])
         body.angularDrag = abs(body.angularVelocity)
 
-  update: (player) ->
+  update: ->
+    # FIXME: This should handle multiple players.
+    player = @game.groups.players.getFirstAlive()
     if @action == 'dead'
       if abs(@sprite.body.velocity.x) > 0 and @sprite.body.onFloor()
         @sprite.body.velocity.x *= @deadDrag
@@ -535,9 +590,36 @@ class Mutant
         @questionSprite.y = @sprite.y - @questionSpriteOffset
 
 
-class Player
+# Our hero. What fists.
+#
+class Player extends Phaser.Sprite
 
-  gravity: 1000
+  constructor: (game, x, y) ->
+    super(game, x, y, 'player', 0)
+    @anchor.setTo(0.5, 0.5)
+    @smoothed = false
+
+    @animations.add('stand', [0], 60, false)
+    @animations.add('walk', [1, 2, 3, 0], 5, true)
+    @animations.add('punch', [4, 5, 6, 7], 7, true)
+    @animations.play('stand')
+
+    @game.physics.enable(this, Phaser.Physics.ARCADE)
+    @body.collideWorldBounds = true
+    @body.setSize(16, 32, 0, 16)
+
+    @brain = new PlayerBrain(@game, this)
+
+  update: ->
+    super
+    @brain.update()
+
+
+# The logic behind a player sprite.
+#
+class PlayerBrain
+
+  gravity: 750
   hurtDuration: 250
   hurtFlashFrames: 10
   hurtShakeFrames: 4
@@ -547,34 +629,24 @@ class Player
   jumpSpeed: 500
   walkSpeed: 150
 
-  constructor: (@game, x, y) ->
+  constructor: (@game, @sprite) ->
+    @hurtTimer = null
     @jumpTimer = 0
 
-    @sprite = @game.add.sprite(x, y, 'player', 0, @game.groups.players)
-    @sprite.anchor.setTo(0.5, 0.5)
-    @sprite.smoothed = false
-
-    @sprite.animations.add('stand', [0], 60, false)
-    @sprite.animations.add('walk', [1, 2, 3, 0], 5, true)
-    @sprite.animations.add('punch', [4, 5, 6, 7], 7, true)
-    @sprite.animations.play('stand')
-
-    @game.physics.enable(@sprite, Phaser.Physics.ARCADE)
-    @sprite.body.collideWorldBounds = true
     @sprite.body.gravity.y = @gravity
     @sprite.body.maxVelocity.y = @jumpSpeed
-    @sprite.body.setSize(16, 32, 0, 16)
 
     @punchSprite = @game.add.sprite(10, 0, null)
     @punchSprite.anchor.setTo(0.5, 0.5)
-    @sprite.addChild(@punchSprite)
     @game.physics.enable(@punchSprite, Phaser.Physics.ARCADE)
     @punchSprite.body.allowGravity = false
     @punchSprite.body.allowRotation = false
     @punchSprite.body.setSize(24, 32, 0, 16)
+    @sprite.addChild(@punchSprite)
 
-    @hurtTimer = null
-
+  # Returns true if the player just started displaying a punch frame. Returns
+  # false for additional ticks after that while the same frame is display, so
+  # that we only trigger punch logic once for a given punch frame.
   isPunching: ->
     anim = @sprite.animations.currentAnim.name
     frame = @sprite.animations.currentFrame.index
@@ -586,13 +658,16 @@ class Player
     else
       @wasPunching = false
 
+  # Called when this player is punched by a mutant.
   onPunched: (mutant) ->
     @hurtTimer = @game.time.now + @hurtDuration
     @game.plugins.effects.flash @hurtFlashFrames
     @game.plugins.effects.shake @hurtShakeFrames
     @game.plugins.effects.slowMotion @hurtSlowMotionFrames, @hurtSlowMotionScale
 
-  update: (keys, mutants) ->
+  update: ->
+    keys = @game.keys
+
     dirX = 0
     dirY = 0
     dirX -= 1 if keys.left.isDown
@@ -624,12 +699,15 @@ class Player
     if @isPunching()
       @game.physics.arcade.overlap(@punchSprite, @game.groups.barrels,
                                    (sprite, barrel) -> barrel.explode())
-      for mutant in mutants
-        if (mutant.action != 'flying' and
-            @game.physics.arcade.overlap(@punchSprite, mutant.sprite))
-          mutant.onPunched(this)
+      @game.groups.mutants.forEachAlive((mutant) ->
+        if (mutant.brain.action != 'flying' and
+            @game.physics.arcade.overlap(@punchSprite, mutant))
+          mutant.brain.onPunched(this)
+      , this, true)
 
 
+# The menu state... this was an ugly hack and should be ignored.
+#
 _game.state.add 'menu',
 
   preload: ->
@@ -656,12 +734,17 @@ _game.state.add 'menu',
     @game.state.start('play') if @key.isDown
 
 
+# The play state.
+#
 _game.state.add 'play',
 
   farBackgroundScroll: 0.1
   nearBackgroundScroll: 0.3
 
   preload: ->
+    # Note that these load functions are passed the URLs from the _scaled
+    # global. This global contains data URIs for the image assets that were
+    # scaled up on the fly.
     @load.image('mountains', _scaled['./assets/mountains.png'])
     @load.image('questionMark', _scaled['./assets/question_mark.png'])
     @load.image('rocks', _scaled['./assets/rocks.png'])
@@ -681,6 +764,9 @@ _game.state.add 'play',
     @game.physics.startSystem(Phaser.Physics.ARCADE)
     @game.physics.arcade.gravity.y = 300
 
+    # Create a bunch of groups so we can be sure things are ordered properly.
+    # We store this as game.groups, too, so sprites and such can get to the
+    # sets of groups.
     @groups = @game.groups = {}
     @groups.background = @game.add.group()
     @groups.explosions = @game.add.group()
@@ -699,12 +785,16 @@ _game.state.add 'play',
     @groups.gibs.bones = @game.add.group()
     @groups.gibs.heads =  @game.add.group()
     @groups.mutants = @game.add.group()
+    @groups.mutants.classType = Mutant
     @groups.players = @game.add.group()
+    @groups.players.classType = Player
     @groups.effects = @game.add.group()
 
+    # Add our effects plugin to the game. It can be accessed via
+    # game.plugins.effects from sprites and such.
     @game.plugins.effects = @game.plugins.add(EffectsPlugin)
 
-    @stage.backgroundColor = '#dbecff'
+    @stage.backgroundColor = '#dbecff'  # This is the sky blue background.
     @farBackground = @game.add.tileSprite(0, @game.height - 192 - 32,
                                           @game.width, 192, 'mountains', 0,
                                           @groups.background)
@@ -712,17 +802,16 @@ _game.state.add 'play',
 
     @createRandomMap()
 
-    @keys = @game.input.keyboard.createCursorKeys()
-    @keys.jump1 = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
-    @keys.jump2 = @game.input.keyboard.addKey(Phaser.Keyboard.Z)
-    @keys.fire1 = @game.input.keyboard.addKey(Phaser.Keyboard.CONTROL)
-    @keys.fire2 = @game.input.keyboard.addKey(Phaser.Keyboard.C)
-    @player = new Player(@game, 32, @game.height - 64)
-    @camera.follow(@player.sprite, Phaser.Camera.FOLLOW_PLATFORMER)
+    @game.keys = @game.input.keyboard.createCursorKeys()
+    @game.keys.jump1 = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
+    @game.keys.jump2 = @game.input.keyboard.addKey(Phaser.Keyboard.Z)
+    @game.keys.fire1 = @game.input.keyboard.addKey(Phaser.Keyboard.CONTROL)
+    @game.keys.fire2 = @game.input.keyboard.addKey(Phaser.Keyboard.C)
 
-    @mutants = (new Mutant(@game, @game.rnd.between(0, @world.width),
-                           @game.height - 64) for i in [0..40])
+    @player = @groups.players.create(32, @game.height - 64)
+    @camera.follow(@player, Phaser.Camera.FOLLOW_PLATFORMER)
 
+  # Create some random terrain to fill the world.
   createRandomMap: ->
     @map = new Phaser.Tilemap(@game, null, 32, 32, 200, 20)
     @map.addTilesetImage('tiles', 'tiles', 32, 32, 4, 4)
@@ -731,6 +820,10 @@ _game.state.add 'play',
     @dirtLayer.resizeWorld()
     @camera.setBoundsToWorld()
 
+    # Iterate over the width of the world (in tiles), and place random dirt
+    # tiles. Each column has a chance of increasing or decreasing in height.
+    # The chance starts very low, but increases a bit each column, so we are
+    # guaranteed to get height changes, but not *too many* height changes.
     numDirtTiles = 16
     dirtBag = new RandomBag([0...numDirtTiles])
     height = 1
@@ -751,12 +844,17 @@ _game.state.add 'play',
         @map.putTile(dirtBag.pop(), x, y)
     @map.setCollisionBetween(0, numDirtTiles)
 
-    # place some barrels
+    # Place some barrels at regular intervals.
     stepWidth = 20
     for stepX in [0...@map.width] by stepWidth
       tileX = @game.rnd.between(stepX, stepX + stepWidth - 1)
       tileY = @map.height - heights[tileX]
       @game.groups.barrels.create(tileX * 32 + 16, tileY * 32)
+
+    # Create a bunch of mutants to punch.
+    for i in [0..40]
+      @groups.mutants.create(@game.rnd.between(0, @world.width),
+                             @game.height - 64)
 
   update: ->
     @farBackground.tilePosition.set(@game.camera.x * -@farBackgroundScroll, 0)
@@ -766,13 +864,11 @@ _game.state.add 'play',
     @game.physics.arcade.collide(@groups.gibs.bones, @dirtLayer)
     @game.physics.arcade.collide(@groups.gibs.heads, @dirtLayer)
     @game.physics.arcade.collide(@groups.players, @dirtLayer)
-    @player.update(@keys, @mutants)
     @game.physics.arcade.collide(@groups.mutants, @dirtLayer)
-    for mutant in @mutants
-      mutant.update(@player)
 
 
 window.addEventListener('load', ->
+  # Before we start the game, we need to scale up our source images by 4x.
   loadScaledImages([
     './assets/barrel.png'
     './assets/explosion.png'
