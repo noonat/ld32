@@ -160,8 +160,8 @@ class EffectsPlugin extends Phaser.Plugin
 
 class Barrel extends Phaser.Sprite
 
-  constructor: (@game, x, y) ->
-    super(@game, x, y, 'barrel', 3)
+  constructor: (game, x, y) ->
+    super(game, x, y, 'barrel', 3)
     @anchor.setTo(0.5, 1.0)
     @animations.add('drip', [0, 0, 0, 0, 0, 1, 2, 3], 10, false)
     @smoothed = false
@@ -175,6 +175,12 @@ class Barrel extends Phaser.Sprite
 
   explode: ->
     @game.plugins.effects.explode(@x, @y - 16)
+    for i in [0..8]
+      gib = @game.groups.gibs.barrel.getFirstExists(false)
+      gib.reset(@x, @y - 16) if gib
+    for i in [0..16]
+      gib = @game.groups.gibs.barrelWaste.getFirstExists(false)
+      gib.reset(@x, @y - 16) if gib
     @kill()
 
   update: ->
@@ -183,6 +189,54 @@ class Barrel extends Phaser.Sprite
       @nextDripTime = @game.time.now + @game.rnd.between(0, 10000)
       @animations.stop(null, true)
       @animations.play('drip')
+
+
+class Gib extends Phaser.Sprite
+
+  angularVelocityRange: [-100, 100]
+  velocityXRange: [100, 300]
+  velocityYRange: [100, 300]
+
+  constructor: (game, x, y, key, frame) ->
+    super(game, x, y, key, frame)
+    @anchor.setTo(0.5, 0.5)
+    @game.physics.enable(this, Phaser.Physics.ARCADE)
+    @body.allowRotation = false
+    @body.collideWorldBounds = true
+    @body.gravity.y = 500
+    @body.setSize(1, 1, 0, 0)
+
+  reset: (x, y, health) ->
+    super(x, y, health)
+    @lifespan = @game.rnd.between(5000, 10000)
+    @body.velocity.x = (@game.rnd.realInRange(@velocityXRange[0],
+                                              @velocityXRange[1]) *
+                        (if @game.rnd.frac() < 0.5 then -1 else 1))
+    @body.drag.x = abs(@body.velocity.x)
+    @body.velocity.y = -@game.rnd.realInRange(@velocityYRange[0],
+                                              @velocityYRange[1])
+    @body.angularVelocity = @game.rnd.realInRange(@angularVelocityRange[0],
+                                                  @angularVelocityRange[1])
+    @body.angularDrag = abs(@body.angularVelocity)
+
+
+class BarrelGib extends Gib
+
+  constructor: (game, x, y) ->
+    super(game, x, y, 'gibsParticles', game.rnd.between(4, 6))
+    @smoothed = false
+    @scale.x = @scale.y = @game.rnd.between(1, 3)
+    @body.setSize(@scale.x, @scale.y)
+
+
+class BarrelWasteGib extends Gib
+
+  constructor: (game, x, y) ->
+    super(game, x, y, 'gibsParticles', game.rnd.between(0, 1))
+    @smoothed = false
+    @scale.x = @scale.y = @game.rnd.between(1, 2)
+    @body.setSize(@scale.x, @scale.y)
+    @body.allowRotation = true
 
 
 class Explosion extends Phaser.Sprite
@@ -610,6 +664,12 @@ _game.state.add 'play',
     @groups.explosions = @game.add.group()
     @groups.explosions.classType = Explosion
     @groups.gibs = {}
+    @groups.gibs.barrel = @game.add.group()
+    @groups.gibs.barrel.classType = BarrelGib
+    @groups.gibs.barrel.createMultiple(64)
+    @groups.gibs.barrelWaste = @game.add.group()
+    @groups.gibs.barrelWaste.classType = BarrelWasteGib
+    @groups.gibs.barrelWaste.createMultiple(32)
     @groups.gibs.particles = @game.add.group()
     @groups.gibs.bones = @game.add.group()
     @groups.gibs.heads =  @game.add.group()
@@ -620,8 +680,8 @@ _game.state.add 'play',
     @game.plugins.effects = @game.plugins.add(EffectsPlugin)
 
     @stage.backgroundColor = '#dbecff'
-    @farBackground = @game.add.tileSprite(0, @game.height - 96 - 32,
-                                          @game.width, 96, 'mountains', 0,
+    @farBackground = @game.add.tileSprite(0, @game.height - 192 - 32,
+                                          @game.width, 192, 'mountains', 0,
                                           @groups.background)
     @farBackground.fixedToCamera = true
 
@@ -677,6 +737,8 @@ _game.state.add 'play',
 
   update: ->
     @farBackground.tilePosition.set(@game.camera.x * -@farBackgroundScroll, 0)
+    @game.physics.arcade.collide(@groups.gibs.barrel, @dirtLayer)
+    @game.physics.arcade.collide(@groups.gibs.barrelWaste, @dirtLayer)
     @game.physics.arcade.collide(@groups.gibs.particles, @dirtLayer)
     @game.physics.arcade.collide(@groups.gibs.bones, @dirtLayer)
     @game.physics.arcade.collide(@groups.gibs.heads, @dirtLayer)
