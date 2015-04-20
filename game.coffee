@@ -108,6 +108,8 @@ class EffectsPlugin extends Phaser.Plugin
   constructor: (game, parent) ->
     super(game, parent)
     @flashGraphics = @game.add.graphics(0, 0)
+    @game.groups.effects.add(@flashGraphics)
+    @game.groups.explosions.createMultiple(10)
     @flashGraphics.beginFill(0xff0000, 0.1)
     @flashGraphics.drawRect(-50, -50, _width + 100, _height + 100)
     @flashGraphics.endFill()
@@ -116,15 +118,22 @@ class EffectsPlugin extends Phaser.Plugin
     @lastShakeTime = 0
     @numShakeFrames = 0
     @numSlowMotionFrames = 0
+    @shakeAmount = 0
+
+  explode: (x, y) ->
+    explosion = @game.groups.explosions.getFirstExists(false)
+    if explosion
+      explosion.reset(x, y)
 
   flash: (numFrames, color) ->
     @numFlashFrames = numFrames
     @flashGraphics.visible = true
 
-  shake: (numFrames) ->
+  shake: (numFrames, amount) ->
     return if @game.time.now - @lastShakeTime < 200
     @lastShakeTime = @game.time.now
     @numShakeFrames = numFrames
+    @shakeAmount = amount or 1
     # window.navigator?.vibrate?(count * 10)
 
   slowMotion: (numFrames, scale) ->
@@ -139,14 +148,67 @@ class EffectsPlugin extends Phaser.Plugin
 
     if @numShakeFrames > 0
       @numShakeFrames--
-      @game.camera.displayObject.position.x += @game.rnd.normal()
-      @game.camera.displayObject.position.y += @game.rnd.normal()
+      @game.camera.displayObject.position.x += @game.rnd.normal() * @shakeAmount
+      @game.camera.displayObject.position.y += @game.rnd.normal() * @shakeAmount
 
     if @numSlowMotionFrames > 0
       @numSlowMotionFrames--
       @game.time.slowMotion = @slowMotionScale
     else
       @game.time.slowMotion = 1.0
+
+
+class Barrel extends Phaser.Sprite
+
+  constructor: (@game, x, y) ->
+    super(@game, x, y, 'barrel', 3)
+    @anchor.setTo(0.5, 1.0)
+    @animations.add('drip', [0, 0, 0, 0, 0, 1, 2, 3], 10, false)
+    @smoothed = false
+    @nextDripTime = @game.time.now + @game.rnd.between(0, 10000)
+
+    @game.physics.enable(this, Phaser.Physics.ARCADE)
+    @body.allowGravity = false
+    @body.collideWorldBounds = true
+    @body.immovable = true
+    @body.setSize(12, 24, 0, 0)
+
+  explode: ->
+    @game.plugins.effects.explode(@x, @y - 16)
+    @kill()
+
+  update: ->
+    super
+    if @nextDripTime < @game.time.now
+      @nextDripTime = @game.time.now + @game.rnd.between(0, 10000)
+      @animations.stop(null, true)
+      @animations.play('drip')
+
+
+class Explosion extends Phaser.Sprite
+
+  constructor: (game, @baseX, @baseY) ->
+    super(game, @baseX, @baseY, 'explosion', 0)
+    @anchor.setTo(0.5, 0.5)
+
+  reset: (x, y, health) ->
+    super(x, y, health)
+    @baseX = x
+    @baseY = y
+    @frame = 0
+    @nextFrameTime = @game.time.now + 100
+    @game.plugins.effects.shake(10, 5)
+
+  update: ->
+    super
+    if @nextFrameTime < @game.time.now
+      @nextFrameTime = @game.time.now + 100
+      if @animations.frame == 0
+        @animations.frame = 1
+      else
+        @kill()
+    @x = Math.round(@baseX + @game.rnd.normal() * 5)
+    @y = Math.round(@baseY + @game.rnd.normal() * 5)
 
 
 class Mutant
@@ -188,9 +250,8 @@ class Mutant
   walkSpeed: 100
   walkSpeedRange: 20
 
-  constructor: (@game, x, y, groups) ->
+  constructor: (@game, x, y) ->
     @health = 3
-    @groups = groups
 
     @punchWalkSpeed = @punchWalkSpeed - @game.rnd.between(0, @punchWalkSpeedRange)
     @walkSpeed = @walkSpeed - @game.rnd.between(0, @walkSpeedRange)
@@ -198,7 +259,7 @@ class Mutant
     @actionTarget = null
     @actionTime = 0
 
-    @sprite = @game.add.sprite(x, y, 'mutant', 0, @groups.mutants)
+    @sprite = @game.add.sprite(x, y, 'mutant', 0, @game.groups.mutants)
     @sprite.anchor.setTo(0.5, 0.5)
     @sprite.smoothed = false
 
@@ -354,16 +415,16 @@ class Mutant
     if @action == 'dead'
       y += 15
     gibs = [
-      @game.add.sprite(x, y, 'gibsBones', 0, @groups.gibs.heads)
-      @game.add.sprite(x, y, 'gibsBones', 1, @groups.gibs.bones)
-      @game.add.sprite(x, y, 'gibsBones', 1, @groups.gibs.bones)
-      @game.add.sprite(x, y, 'gibsParticles', 0, @groups.gibs.particles)
-      @game.add.sprite(x, y, 'gibsParticles', 1, @groups.gibs.particles)
+      @game.add.sprite(x, y, 'gibsBones', 0, @game.groups.gibs.heads)
+      @game.add.sprite(x, y, 'gibsBones', 1, @game.groups.gibs.bones)
+      @game.add.sprite(x, y, 'gibsBones', 1, @game.groups.gibs.bones)
+      @game.add.sprite(x, y, 'gibsParticles', 0, @game.groups.gibs.particles)
+      @game.add.sprite(x, y, 'gibsParticles', 1, @game.groups.gibs.particles)
     ]
     for i in [0..@game.rnd.between(@gibCountRange[0], @gibCountRange[1])]
       frame = @game.rnd.between(2, 3)
       bloodGib = @game.add.sprite(x, y, 'gibsParticles', frame,
-                                  @groups.gibs.particles)
+                                  @game.groups.gibs.particles)
       bloodGib.lifespan = @game.rnd.between(@bloodLifespanRange[0],
                                             @bloodLifespanRange[1])
       gibs.push(bloodGib)
@@ -418,7 +479,7 @@ class Player
   constructor: (@game, x, y) ->
     @jumpTimer = 0
 
-    @sprite = @game.add.sprite(x, y, 'player', 0)
+    @sprite = @game.add.sprite(x, y, 'player', 0, @game.groups.players)
     @sprite.anchor.setTo(0.5, 0.5)
     @sprite.smoothed = false
 
@@ -490,6 +551,8 @@ class Player
       @sprite.tint = 0xffffff
 
     if @isPunching()
+      @game.physics.arcade.overlap(@punchSprite, @game.groups.barrels,
+                                   (sprite, barrel) -> barrel.explode())
       for mutant in mutants
         if (mutant.action != 'flying' and
             @game.physics.arcade.overlap(@punchSprite, mutant.sprite))
@@ -524,6 +587,10 @@ _game.state.add 'play',
     @load.image('questionMark', _scaled['/assets/question_mark.png'])
     @load.image('rocks', _scaled['/assets/rocks.png'])
     @load.image('tiles', _scaled['/assets/tiles.png'])
+    @load.spritesheet('barrel', _scaled['/assets/barrel.png'], 44, 32)
+    @load.spritesheet('explosion', _scaled['/assets/explosion.png'], 128, 128)
+    @load.spritesheet('explosionSmall', _scaled['/assets/explosion_small.png'],
+                      64, 64)
     @load.spritesheet('gibsBones', _scaled['/assets/gibs_bones.png'],
                       20, 16, -1, 4, 4)
     @load.spritesheet('gibsParticles', _scaled['/assets/gibs_particles.png'],
@@ -532,52 +599,33 @@ _game.state.add 'play',
     @load.spritesheet('player', _scaled['/assets/player.png'], 64, 64)
 
   create: ->
-    @farBackground = @game.add.tileSprite(0, @game.height - 96 - 32,
-                                          @game.width, 96, 'mountains')
-    @farBackground.fixedToCamera = true
+    @game.physics.startSystem(Phaser.Physics.ARCADE)
+    @game.physics.arcade.gravity.y = 300
 
-    @groups = {}
+    @groups = @game.groups = {}
+    @groups.background = @game.add.group()
+    @groups.explosions = @game.add.group()
+    @groups.barrels = @game.add.group()
+    @groups.barrels.classType = Barrel
+    @groups.explosions = @game.add.group()
+    @groups.explosions.classType = Explosion
     @groups.gibs = {}
     @groups.gibs.particles = @game.add.group()
     @groups.gibs.bones = @game.add.group()
     @groups.gibs.heads =  @game.add.group()
     @groups.mutants = @game.add.group()
+    @groups.players = @game.add.group()
+    @groups.effects = @game.add.group()
+
+    @game.plugins.effects = @game.plugins.add(EffectsPlugin)
 
     @stage.backgroundColor = '#dbecff'
+    @farBackground = @game.add.tileSprite(0, @game.height - 96 - 32,
+                                          @game.width, 96, 'mountains', 0,
+                                          @groups.background)
+    @farBackground.fixedToCamera = true
 
-    @game.physics.startSystem(Phaser.Physics.ARCADE)
-    @game.physics.arcade.gravity.y = 300
-
-    @map = new Phaser.Tilemap(@game, null, 32, 32, 60, 20)
-    @map.addTilesetImage('tiles', 'tiles', 32, 32, 4, 4)
-
-    @layer = @map.createBlankLayer('dirt', 60, 20, 32, 32)
-    @layer.resizeWorld()
-    @camera.setBoundsToWorld()
-
-    dirtBag = new RandomBag([0..15])
-    chance = 0
-    height = 1
-    for x in [0..59]
-      if @game.rnd.frac() < chance
-        chance = 0
-        if height == 1
-          height++
-        else if height == 4
-          height--
-        else
-          height += sign(@game.rnd.normal())
-      chance = Math.min(chance + 0.05, 1.0)
-      for y in [20 - height...20]
-        @map.putTile(dirtBag.pop(), x, y)
-    for i in [0..2]
-      height = @game.rnd.between(1, 1)
-      width = @game.rnd.between(1, 4)
-      startX = @game.rnd.between(i * 20, i * 20 + (20 - width))
-      for y in [(19 - height)...19]
-        for x in [startX...startX + width]
-          @map.putTile(dirtBag.pop(), x, y)
-    @map.setCollisionBetween(0, 16)
+    @createRandomMap()
 
     @keys = @game.input.keyboard.createCursorKeys()
     @keys.jump1 = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
@@ -587,27 +635,63 @@ _game.state.add 'play',
     @camera.follow(@player.sprite, Phaser.Camera.FOLLOW_PLATFORMER)
 
     @mutants = (new Mutant(@game, @game.rnd.between(0, @world.width),
-                           @game.height - 64, @groups) for i in [0..5])
+                           @game.height - 64) for i in [0..5])
 
-    @game.plugins.effects = @game.plugins.add(EffectsPlugin)
+  createRandomMap: ->
+    @map = new Phaser.Tilemap(@game, null, 32, 32, 60, 20)
+    @map.addTilesetImage('tiles', 'tiles', 32, 32, 4, 4)
+
+    @dirtLayer = @map.createBlankLayer('dirt', 60, 20, 32, 32)
+    @dirtLayer.resizeWorld()
+    @camera.setBoundsToWorld()
+
+    numDirtTiles = 16
+    dirtBag = new RandomBag([0...numDirtTiles])
+    height = 1
+    heights = []
+    heightChance = 0
+    for x in [0...@map.width]
+      if @game.rnd.frac() < heightChance
+        heightChance = 0
+        if height == 1
+          height++
+        else if height == 4
+          height--
+        else
+          height += sign(@game.rnd.normal())
+      heightChance += 0.05
+      heights[x] = height
+      for y in [@map.height - height...@map.height]
+        @map.putTile(dirtBag.pop(), x, y)
+    @map.setCollisionBetween(0, numDirtTiles)
+
+    # place some barrels
+    stepWidth = 20
+    for stepX in [0...@map.width] by stepWidth
+      tileX = @game.rnd.between(stepX, stepX + stepWidth - 1)
+      tileY = @map.height - heights[tileX]
+      @game.groups.barrels.create(tileX * 32 + 16, tileY * 32)
 
   render: ->
     @game.debug.text(@game.time.fps or '--', 2, 14, "#ffffff")
 
   update: ->
     @farBackground.tilePosition.set(@game.camera.x * -@farBackgroundScroll, 0)
-    @game.physics.arcade.collide(@groups.gibs.particles, @layer)
-    @game.physics.arcade.collide(@groups.gibs.bones, @layer)
-    @game.physics.arcade.collide(@groups.gibs.heads, @layer)
-    @game.physics.arcade.collide(@player.sprite, @layer)
+    @game.physics.arcade.collide(@groups.gibs.particles, @dirtLayer)
+    @game.physics.arcade.collide(@groups.gibs.bones, @dirtLayer)
+    @game.physics.arcade.collide(@groups.gibs.heads, @dirtLayer)
+    @game.physics.arcade.collide(@groups.players, @dirtLayer)
     @player.update(@keys, @mutants)
-    @game.physics.arcade.collide(@groups.mutants, @layer)
+    @game.physics.arcade.collide(@groups.mutants, @dirtLayer)
     for mutant in @mutants
       mutant.update(@player)
 
 
 window.addEventListener('load', ->
   loadScaledImages([
+    '/assets/barrel.png'
+    '/assets/explosion.png'
+    '/assets/explosion_small.png'
     '/assets/gibs_bones.png'
     '/assets/gibs_particles.png'
     '/assets/mountains.png'
