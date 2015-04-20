@@ -1,25 +1,32 @@
 'use strict'
 
+
+# These are used by the runtime scaling code. We need a working canvas to draw
+# the images into so we can get their image data to scale it up. The resulting
+# scaled images are stored as data URIs.
+#
+# FIXME: There's probably a more efficient way to do this with Phaser.
 _canvas = document.createElement 'canvas'
 _scale = 4
 _scaled = {}
-_width = 900
-_height = 500
-_game = new Phaser.Game(_width, _height, Phaser.AUTO, 'phaser')
 
 
-abs = (value) ->
-  if value >= 0
-    value
-  else
-    -value
+# The main Phaser game object. Try not to use this global variable, though.
+_game = new Phaser.Game(900, 500, Phaser.AUTO, 'phaser')
 
 
-sign = (value) ->
-  if value >= 0
-    1
-  else
-    -1
+# Return the absolute version of value.
+abs = (value) -> if value >= 0 then value else -value
+
+# Return the squared distance between a and b, where a and b are any objects
+# that have x and y properties.
+distanceSquared = (a, b) ->
+  deltaX = a.x - b.x
+  deltaY = a.y - b.y
+  deltaX * deltaX + deltaY * deltaY
+
+# Returns -1 if the value is less than 0, or 1 otherwise.
+sign = (value) -> if value >= 0 then 1 else -1
 
 
 # Trigger a breakpoint inside the game file, so the web inspector can be
@@ -133,7 +140,7 @@ class EffectsPlugin extends Phaser.Plugin
     @numFlashFrames = numFrames
     @flashGraphics.clear()
     @flashGraphics.beginFill(color, 0.1)
-    @flashGraphics.drawRect(-50, -50, _width + 100, _height + 100)
+    @flashGraphics.drawRect(-50, -50, @game.width + 100, @game.height + 100)
     @flashGraphics.endFill()
     @flashGraphics.visible = true
 
@@ -190,13 +197,11 @@ class Barrel extends Phaser.Sprite
 
   # Called by PlayerBrain when the player punches a barrel.
   explode: ->
+    maxExplodeDistanceSquared = @maxExplodeDistance * @maxExplodeDistance
+
     # Gib any mutants that are close enough.
     @game.groups.mutants.forEachAlive((mutant) ->
-      # FIXME: Phaser must have a way to check distance.
-      deltaX = @x - mutant.x
-      deltaY = @y - mutant.y
-      distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY)
-      if distance < @maxExplodeDistance
+      if distanceSquared(this, mutant) < maxExplodeDistanceSquared
         # FIXME: MutantBrain should take care of these.
         mutant.brain.action = 'dead'
         mutant.brain.actionTime = Infinity
@@ -206,12 +211,10 @@ class Barrel extends Phaser.Sprite
 
     # Knock back any players who are close enough.
     @game.groups.players.forEachAlive((player) ->
-      deltaX = @x - player.x
-      deltaY = @y - player.y
-      distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY)
-      # FIXME: Horizontal knockback doens't work because PlayerBrain
+      # FIXME: Horizontal knockback doesn't work because PlayerBrain
       # resets velocity.x to 0 every frame.
-      player.body.velocity.y = -300 if distance < @maxExplodeDistance
+      if distanceSquared(this, player) < maxExplodeDistanceSquared
+        player.body.velocity.y = -300
     , this, true)
 
     # Explode the barrel and create some gibs.
@@ -852,7 +855,7 @@ _game.state.add 'play',
       @game.groups.barrels.create(tileX * 32 + 16, tileY * 32)
 
     # Create a bunch of mutants to punch.
-    for i in [0..40]
+    for i in [0...40]
       @groups.mutants.create(@game.rnd.between(0, @world.width),
                              @game.height - 64)
 
