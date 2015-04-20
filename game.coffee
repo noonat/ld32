@@ -174,6 +174,22 @@ class Barrel extends Phaser.Sprite
     @body.setSize(12, 24, 0, 0)
 
   explode: ->
+    @game.groups.mutants.forEachAlive((mutant) ->
+      deltaX = @x - mutant.x
+      deltaY = @y - mutant.y
+      distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY)
+      if distance < 32 * 4
+        mutant.brain.action = 'dead'
+        mutant.brain.actionTime = Infinity
+        mutant.brain.gib()
+        mutant.kill()
+    , this, true)
+    @game.groups.players.forEachAlive((player) ->
+      deltaX = @x - player.x
+      deltaY = @y - player.y
+      distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY)
+      player.body.velocity.y = -300 if distance < 32 * 4
+    , this, true)
     @game.plugins.effects.explode(@x, @y - 16)
     for i in [0..8]
       gib = @game.groups.gibs.barrel.getFirstExists(false)
@@ -314,6 +330,7 @@ class Mutant
     @actionTime = 0
 
     @sprite = @game.add.sprite(x, y, 'mutant', 0, @game.groups.mutants)
+    @sprite.brain = this
     @sprite.anchor.setTo(0.5, 0.5)
     @sprite.smoothed = false
 
@@ -582,7 +599,7 @@ class Player
     dirX += 1 if keys.right.isDown
 
     speed = @walkSpeed
-    animation = if keys.fire.isDown
+    animation = if keys.fire1.isDown or keys.fire2.isDown
       speed = 0
       'punch'
     else if dirX < 0
@@ -615,19 +632,28 @@ class Player
 
 _game.state.add 'menu',
 
-  create: ->
-    playButtonGraphics = @game.make.graphics(0, 0)
-    playButtonGraphics.beginFill(Phaser.Color.getColor(255, 255, 255), 1.0)
-    playButtonGraphics.drawRect(0, 0, 200, 50)
-    playButtonGraphics.endFill()
-    playButtonText = @game.make.text(70, 7, 'Play')
-    playButton = @game.add.button((_width - 200) / 2, (_height - 50) / 2,
-                                  null, @playButtonClicked, this)
-    playButton.addChild(playButtonGraphics)
-    playButton.addChild(playButtonText)
+  preload: ->
+    @load.image('title', _scaled['./assets/title.png'])
 
-  playButtonClicked: ->
-    @game.state.start 'play'
+  create: ->
+    @game.add.image(0, 0, 'title')
+
+    textStyle =
+      fill: '#dbecff'
+      font: '20px arial'
+    texts = [
+      @game.add.text(700, 310, 'arrows to move', textStyle)
+      @game.add.text(700, 335, 'space or z to jump', textStyle)
+      @game.add.text(700, 360, 'ctrl or c to punch', textStyle)
+      @game.add.text(700, 410, 'space to start', textStyle)
+    ]
+    for text in texts
+      text.smoothed = false
+
+    @key = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
+
+  update: ->
+    @game.state.start('play') if @key.isDown
 
 
 _game.state.add 'play',
@@ -636,21 +662,20 @@ _game.state.add 'play',
   nearBackgroundScroll: 0.3
 
   preload: ->
-    @game.time.advancedTiming = true
-    @load.image('mountains', _scaled['/assets/mountains.png'])
-    @load.image('questionMark', _scaled['/assets/question_mark.png'])
-    @load.image('rocks', _scaled['/assets/rocks.png'])
-    @load.image('tiles', _scaled['/assets/tiles.png'])
-    @load.spritesheet('barrel', _scaled['/assets/barrel.png'], 44, 32)
-    @load.spritesheet('explosion', _scaled['/assets/explosion.png'], 128, 128)
-    @load.spritesheet('explosionSmall', _scaled['/assets/explosion_small.png'],
+    @load.image('mountains', _scaled['./assets/mountains.png'])
+    @load.image('questionMark', _scaled['./assets/question_mark.png'])
+    @load.image('rocks', _scaled['./assets/rocks.png'])
+    @load.image('tiles', _scaled['./assets/tiles.png'])
+    @load.spritesheet('barrel', _scaled['./assets/barrel.png'], 44, 32)
+    @load.spritesheet('explosion', _scaled['./assets/explosion.png'], 128, 128)
+    @load.spritesheet('explosionSmall', _scaled['./assets/explosion_small.png'],
                       64, 64)
-    @load.spritesheet('gibsBones', _scaled['/assets/gibs_bones.png'],
+    @load.spritesheet('gibsBones', _scaled['./assets/gibs_bones.png'],
                       20, 16, -1, 4, 4)
-    @load.spritesheet('gibsParticles', _scaled['/assets/gibs_particles.png'],
+    @load.spritesheet('gibsParticles', _scaled['./assets/gibs_particles.png'],
                       4, 4, -1, 4, 4)
-    @load.spritesheet('mutant', _scaled['/assets/mutant.png'], 64, 64)
-    @load.spritesheet('player', _scaled['/assets/player.png'], 64, 64)
+    @load.spritesheet('mutant', _scaled['./assets/mutant.png'], 64, 64)
+    @load.spritesheet('player', _scaled['./assets/player.png'], 64, 64)
 
   create: ->
     @game.physics.startSystem(Phaser.Physics.ARCADE)
@@ -690,18 +715,19 @@ _game.state.add 'play',
     @keys = @game.input.keyboard.createCursorKeys()
     @keys.jump1 = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
     @keys.jump2 = @game.input.keyboard.addKey(Phaser.Keyboard.Z)
-    @keys.fire = @game.input.keyboard.addKey(Phaser.Keyboard.C)
-    @player = new Player(@game, @world.width / 2, @game.height - 64)
+    @keys.fire1 = @game.input.keyboard.addKey(Phaser.Keyboard.CONTROL)
+    @keys.fire2 = @game.input.keyboard.addKey(Phaser.Keyboard.C)
+    @player = new Player(@game, 32, @game.height - 64)
     @camera.follow(@player.sprite, Phaser.Camera.FOLLOW_PLATFORMER)
 
     @mutants = (new Mutant(@game, @game.rnd.between(0, @world.width),
-                           @game.height - 64) for i in [0..5])
+                           @game.height - 64) for i in [0..40])
 
   createRandomMap: ->
-    @map = new Phaser.Tilemap(@game, null, 32, 32, 60, 20)
+    @map = new Phaser.Tilemap(@game, null, 32, 32, 200, 20)
     @map.addTilesetImage('tiles', 'tiles', 32, 32, 4, 4)
 
-    @dirtLayer = @map.createBlankLayer('dirt', 60, 20, 32, 32)
+    @dirtLayer = @map.createBlankLayer('dirt', @map.width, @map.height, 32, 32)
     @dirtLayer.resizeWorld()
     @camera.setBoundsToWorld()
 
@@ -732,9 +758,6 @@ _game.state.add 'play',
       tileY = @map.height - heights[tileX]
       @game.groups.barrels.create(tileX * 32 + 16, tileY * 32)
 
-  render: ->
-    @game.debug.text(@game.time.fps or '--', 2, 14, "#ffffff")
-
   update: ->
     @farBackground.tilePosition.set(@game.camera.x * -@farBackgroundScroll, 0)
     @game.physics.arcade.collide(@groups.gibs.barrel, @dirtLayer)
@@ -751,16 +774,17 @@ _game.state.add 'play',
 
 window.addEventListener('load', ->
   loadScaledImages([
-    '/assets/barrel.png'
-    '/assets/explosion.png'
-    '/assets/explosion_small.png'
-    '/assets/gibs_bones.png'
-    '/assets/gibs_particles.png'
-    '/assets/mountains.png'
-    '/assets/mutant.png'
-    '/assets/player.png'
-    '/assets/question_mark.png'
-    '/assets/rocks.png'
-    '/assets/tiles.png'
-  ], -> _game.state.start('play'))
+    './assets/barrel.png'
+    './assets/explosion.png'
+    './assets/explosion_small.png'
+    './assets/gibs_bones.png'
+    './assets/gibs_particles.png'
+    './assets/mountains.png'
+    './assets/mutant.png'
+    './assets/player.png'
+    './assets/question_mark.png'
+    './assets/rocks.png'
+    './assets/tiles.png'
+    './assets/title.png'
+  ], -> _game.state.start('menu'))
 , false)
