@@ -1,20 +1,6 @@
 'use strict'
 
 
-# These are used by the runtime scaling code. We need a working canvas to draw
-# the images into so we can get their image data to scale it up. The resulting
-# scaled images are stored as data URIs.
-#
-# FIXME: There's probably a more efficient way to do this with Phaser.
-_canvas = document.createElement 'canvas'
-_scale = 4
-_scaled = {}
-
-
-# The main Phaser game object. Try not to use this global variable, though.
-_game = new Phaser.Game(900, 500, Phaser.AUTO, 'phaser')
-
-
 # Return the absolute version of value.
 abs = (value) -> if value >= 0 then value else -value
 
@@ -33,69 +19,6 @@ sign = (value) -> if value >= 0 then 1 else -1
 # used to debug game variables.
 #
 window.debugGame = -> debugger
-
-
-# Load a single image and scale it up
-#
-loadScaledImage = (url, callback, callbackContext) ->
-  image = null
-
-  onImageLoaded = ->
-    width = image.width
-    height = image.height
-    scaledWidth = width * _scale
-    scaledHeight = height * _scale
-
-    _canvas.width = scaledWidth
-    _canvas.height = scaledHeight
-    context = _canvas.getContext '2d'
-    context.clearRect(0, 0, scaledWidth, scaledHeight)
-
-    context.drawImage(image, 0, 0)
-    imageData = context.getImageData(0, 0, width, height)
-    data = imageData.data
-
-    scaledImageData = context.createImageData(scaledWidth, scaledHeight)
-    scaledData = scaledImageData.data
-
-    for y in [0..height]
-      for x in [0..width]
-        index = (y * width * 4) + (x * 4)
-        r = data[index + 0]
-        g = data[index + 1]
-        b = data[index + 2]
-        a = data[index + 3]
-        scaledX = x * _scale
-        scaledY = y * _scale
-        scaledIndex = (scaledY * scaledWidth * 4) + (scaledX * 4)
-        for sy in [0.._scale]
-          for sx in [0.._scale]
-            si = scaledIndex + (sy * scaledWidth * 4) + (sx * 4)
-            scaledData[si + 0] = r
-            scaledData[si + 1] = g
-            scaledData[si + 2] = b
-            scaledData[si + 3] = a
-
-    context.clearRect(0, 0, scaledWidth, scaledHeight)
-    context.putImageData(scaledImageData, 0, 0)
-    callback.call(callbackContext, url, _canvas.toDataURL())
-
-  image = document.createElement('img')
-  image.onload = onImageLoaded
-  image.src = url
-
-
-# Load a list of images and scale them up
-#
-loadScaledImages = (urls, callback, context) ->
-  numImages = urls.length
-  numLoadedImages = 0
-  onImageScaled = (url, scaledUrl) ->
-    _scaled[url] = scaledUrl
-    numLoadedImages++
-    callback.call(context) if numLoadedImages >= numImages
-  for url in urls
-    loadScaledImage(url, onImageScaled)
 
 
 # Allows you to call pop() forever to continuously loop over shuffled versions
@@ -709,12 +632,102 @@ class PlayerBrain
       , this, true)
 
 
-# The menu state... this was an ugly hack and should be ignored.
+# This preloader state loads all the image assets and does a nearest neighbor
+# scale up by 4x to get the pixellated look we want.
 #
-_game.state.add 'menu',
+class PreloadState extends Phaser.State
+
+  assets: [
+    ['image', 'mountains', './assets/mountains.png']
+    ['image', 'questionMark', './assets/question_mark.png']
+    ['image', 'rocks', './assets/rocks.png']
+    ['image', 'tiles', './assets/tiles.png']
+    ['image', 'title', './assets/title.png']
+    ['spritesheet', 'barrel', './assets/barrel.png', 11, 8]
+    ['spritesheet', 'explosion', './assets/explosion.png', 32, 32]
+    ['spritesheet', 'explosionSmall', './assets/explosion_small.png', 16, 16]
+    ['spritesheet', 'gibsBones', './assets/gibs_bones.png', 5, 4, -1, 1, 1]
+    ['spritesheet', 'gibsParticles', './assets/gibs_particles.png', 1, 1, -1, 1, 1]
+    ['spritesheet', 'mutant', './assets/mutant.png', 16, 16]
+    ['spritesheet', 'player', './assets/player.png', 16, 16]
+  ]
+  assetScale: 4
 
   preload: ->
-    @load.image('title', _scaled['./assets/title.png'])
+    super
+    @canvas = document.createElement('canvas')
+    for [type, key, url, args...] in @assets
+      @load[type](key, url, args...)
+
+  create: ->
+    for [type, key, url, args...] in @assets
+      image = @cache.getImage(key)
+      continue unless image
+      @scaleImage(image, @assetScale)
+      @cache.removeImage(key)
+      if type == 'spritesheet'
+        # For spritesheets, we also need to scale up some of the arguments.
+        [frameWidth, frameHeight, frameMax, margin, spacing] = args
+        frameWidth *= @assetScale
+        frameHeight *= @assetScale
+        frameMax ?= -1
+        margin = (margin or 0) * @assetScale
+        spacing = (spacing or 0) * @assetScale
+        @cache.addSpriteSheet(key, url, image, frameWidth, frameHeight,
+                              frameMax, margin, spacing)
+      else
+        @cache.addImage(key, url, image)
+    @game.state.start('play')
+
+  # Scale the image in place by the given amount. This does the scaling work
+  # in a canvas object, then sets the src on the image element to a data URI
+  # from the canvas.
+  scaleImage: (image, scale) ->
+    width = image.width
+    height = image.height
+    scaledWidth = width * scale
+    scaledHeight = height * scale
+
+    @canvas.width = scaledWidth
+    @canvas.height = scaledHeight
+    context = @canvas.getContext('2d')
+    context.clearRect(0, 0, scaledWidth, scaledHeight)
+
+    context.drawImage(image, 0, 0)
+    imageData = context.getImageData(0, 0, width, height)
+    data = imageData.data
+
+    scaledImageData = context.createImageData(scaledWidth, scaledHeight)
+    scaledData = scaledImageData.data
+
+    for y in [0...height]
+      rowIndex = y * width * 4
+      for x in [0...width]
+        index = rowIndex + (x * 4)
+        r = data[index + 0]
+        g = data[index + 1]
+        b = data[index + 2]
+        a = data[index + 3]
+        scaledX = x * scale
+        scaledY = y * scale
+        scaledIndex = (scaledY * scaledWidth * 4) + (scaledX * 4)
+        for sy in [0...scale]
+          scaledRowIndex = scaledIndex + (sy * scaledWidth * 4)
+          for sx in [0...scale]
+            si = scaledRowIndex + (sx * 4)
+            scaledData[si + 0] = r
+            scaledData[si + 1] = g
+            scaledData[si + 2] = b
+            scaledData[si + 3] = a
+
+    context.clearRect(0, 0, scaledWidth, scaledHeight)
+    context.putImageData(scaledImageData, 0, 0)
+    image.src = @canvas.toDataURL()
+
+
+# The menu state... this was an ugly hack and should be ignored.
+#
+class MenuState extends Phaser.State
 
   create: ->
     @game.add.image(0, 0, 'title')
@@ -739,29 +752,10 @@ _game.state.add 'menu',
 
 # The play state.
 #
-_game.state.add 'play',
+class PlayState extends Phaser.State
 
   farBackgroundScroll: 0.1
   nearBackgroundScroll: 0.3
-
-  preload: ->
-    # Note that these load functions are passed the URLs from the _scaled
-    # global. This global contains data URIs for the image assets that were
-    # scaled up on the fly.
-    @load.image('mountains', _scaled['./assets/mountains.png'])
-    @load.image('questionMark', _scaled['./assets/question_mark.png'])
-    @load.image('rocks', _scaled['./assets/rocks.png'])
-    @load.image('tiles', _scaled['./assets/tiles.png'])
-    @load.spritesheet('barrel', _scaled['./assets/barrel.png'], 44, 32)
-    @load.spritesheet('explosion', _scaled['./assets/explosion.png'], 128, 128)
-    @load.spritesheet('explosionSmall', _scaled['./assets/explosion_small.png'],
-                      64, 64)
-    @load.spritesheet('gibsBones', _scaled['./assets/gibs_bones.png'],
-                      20, 16, -1, 4, 4)
-    @load.spritesheet('gibsParticles', _scaled['./assets/gibs_particles.png'],
-                      4, 4, -1, 4, 4)
-    @load.spritesheet('mutant', _scaled['./assets/mutant.png'], 64, 64)
-    @load.spritesheet('player', _scaled['./assets/player.png'], 64, 64)
 
   create: ->
     @game.physics.startSystem(Phaser.Physics.ARCADE)
@@ -870,20 +864,9 @@ _game.state.add 'play',
     @game.physics.arcade.collide(@groups.mutants, @dirtLayer)
 
 
-window.addEventListener('load', ->
-  # Before we start the game, we need to scale up our source images by 4x.
-  loadScaledImages([
-    './assets/barrel.png'
-    './assets/explosion.png'
-    './assets/explosion_small.png'
-    './assets/gibs_bones.png'
-    './assets/gibs_particles.png'
-    './assets/mountains.png'
-    './assets/mutant.png'
-    './assets/player.png'
-    './assets/question_mark.png'
-    './assets/rocks.png'
-    './assets/tiles.png'
-    './assets/title.png'
-  ], -> _game.state.start('play'))
-, false)
+do ->
+  game = new Phaser.Game(900, 500, Phaser.AUTO, 'phaser')
+  game.state.add('preload', new PreloadState())
+  game.state.add('menu', new MenuState())
+  game.state.add('play', new PlayState())
+  game.state.start('preload')
