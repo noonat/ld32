@@ -786,5 +786,5 @@ window.addEventListener('load', ->
     './assets/rocks.png'
     './assets/tiles.png'
     './assets/title.png'
-  ], -> _game.state.start('menu'))
+  ], -> _game.state.start('play'))
 , false)
