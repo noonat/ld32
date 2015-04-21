@@ -412,8 +412,8 @@ class MutantBrain
 
   # Returns true if the mutant should cause punch damage to the player.
   isPunching: (player) ->
-    anim = @sprite.animations.currentAnim.name
-    frame = @sprite.animations.currentFrame.index
+    anim = @sprite.animations.name
+    frame = @sprite.animations.frame
     if ((anim == 'punch' and (frame == 9 or frame == 1)) or
         (anim == 'punchWalk' and (frame == 5 or frame == 7)))
       # This is a punching frame, see if the punch sprite is hitting the player
@@ -552,6 +552,7 @@ class PlayerBrain
   constructor: (@game, @sprite) ->
     @hurtTimer = null
     @jumpTimer = 0
+    @punchTimer = 0
 
     @sprite.body.gravity.y = @gravity
     @sprite.body.maxVelocity.y = @jumpSpeed
@@ -568,8 +569,8 @@ class PlayerBrain
   # false for additional ticks after that while the same frame is display, so
   # that we only trigger punch logic once for a given punch frame.
   isPunching: ->
-    anim = @sprite.animations.currentAnim.name
-    frame = @sprite.animations.currentFrame.index
+    anim = @sprite.animations.name
+    frame = @sprite.animations.frame
     if anim == 'punch' and (frame == 5 or frame == 7)
       unless @wasPunching
         @wasPunching = true
@@ -593,8 +594,11 @@ class PlayerBrain
     dirX -= 1 if keys.left.isDown
     dirX += 1 if keys.right.isDown
 
+    if @punchTimer < @game.time.now and (keys.fire1.isDown or keys.fire2.isDown)
+      @punchTimer = @game.time.now + 285
+
     speed = @walkSpeed
-    animation = if keys.fire1.isDown or keys.fire2.isDown
+    animation = if @punchTimer > @game.time.now
       speed = 0
       'punch'
     else if dirX < 0
@@ -751,7 +755,7 @@ class MenuState extends Phaser.State
 
     players = []
     for i in [0...4]
-      player = new Player(@game, 696, 236 + i * 48, update: ->)
+      player = new Player(@game, 630, 238 + i * 48, update: ->)
       player.body.allowGravity = false
       player.body.immovable = true
       player.fixedToCamera = true
@@ -794,9 +798,8 @@ class MenuState extends Phaser.State
 
     if @punchTime < @game.time.now
       @punchTime = @game.time.now + 1000
-      currentAnimName = @punchPlayer.animations.currentAnim.name
       @punchPlayer.animations.play(
-        if currentAnimName == 'punch' then 'stand' else 'punch')
+        if @punchPlayer.animations.name == 'punch' then 'stand' else 'punch')
 
     @game.state.start('play') if @key.isDown
 

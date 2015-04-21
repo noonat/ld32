@@ -8,7 +8,7 @@
   },
   "scripts": {
     "postinstall": "coffee --compile --map *.coffee",
-    "start": "http-server -p ${PORT-8080}",
+    "start": "http-server -p ${PORT-8080} -c-1",
     "watch": "http-server -p ${PORT-8080} & coffee --compile --map --watch *.coffee",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
