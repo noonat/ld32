@@ -15,12 +15,6 @@ distanceSquared = (a, b) ->
 sign = (value) -> if value >= 0 then 1 else -1
 
 
-# Trigger a breakpoint inside the game file, so the web inspector can be
-# used to debug game variables.
-#
-window.debugGame = -> debugger
-
-
 # Allows you to call pop() forever to continuously loop over shuffled versions
 # of the passed array.
 #
@@ -520,7 +514,7 @@ class MutantBrain
 #
 class Player extends Phaser.Sprite
 
-  constructor: (game, x, y) ->
+  constructor: (game, x, y, brain) ->
     super(game, x, y, 'player', 0)
     @anchor.setTo(0.5, 0.5)
     @smoothed = false
@@ -534,7 +528,7 @@ class Player extends Phaser.Sprite
     @body.collideWorldBounds = true
     @body.setSize(16, 32, 0, 16)
 
-    @brain = new PlayerBrain(@game, this)
+    @brain = brain or new PlayerBrain(@game, this)
 
   update: ->
     super
@@ -677,7 +671,7 @@ class PreloadState extends Phaser.State
                               frameMax, margin, spacing)
       else
         @cache.addImage(key, url, image)
-    @game.state.start('play')
+    @game.state.start('menu')
 
   # Scale the image in place by the given amount. This does the scaling work
   # in a canvas object, then sets the src on the image element to a data URI
@@ -729,24 +723,81 @@ class PreloadState extends Phaser.State
 #
 class MenuState extends Phaser.State
 
-  create: ->
-    @game.add.image(0, 0, 'title')
+  cameraSpeed: 100
+  worldGravity: 300
 
-    textStyle =
-      fill: '#dbecff'
-      font: '20px arial'
-    texts = [
-      @game.add.text(700, 310, 'arrows to move', textStyle)
-      @game.add.text(700, 335, 'space or z to jump', textStyle)
-      @game.add.text(700, 360, 'ctrl or c to punch', textStyle)
-      @game.add.text(700, 410, 'space to start', textStyle)
-    ]
-    for text in texts
-      text.smoothed = false
+  create: ->
+    @game.physics.startSystem(Phaser.Physics.ARCADE)
+    @game.physics.arcade.gravity.y = @worldGravity
+
+    @stage.backgroundColor = '#dbecff'  # This is the sky blue background.
+    @farBackground = @game.add.tileSprite(0, 224, @game.width, 192,
+                                          'mountains', 0)
+    @farBackground.autoScroll(-10, 0)
+    @farBackground.fixedToCamera = true
+    @farBackground.tint = 0xcccccc
+
+    numDirtTiles = 16
+    dirtBag = new RandomBag([0...numDirtTiles])
+    @map = new Phaser.Tilemap(@game, null, 32, 32, 100, 100)
+    @map.addTilesetImage('tiles', 'tiles', 32, 32, 4, 4)
+    @map.createBlankLayer('dirt', @map.width, @map.height, 32, 32).resizeWorld()
+    for y in [11...13]
+      for x in [0...@map.width]
+        @map.putTile(dirtBag.pop(), x, y)
+
+    @title = @game.add.image(0, 0, 'title')
+    @title.fixedToCamera = true
+
+    players = []
+    for i in [0...4]
+      player = new Player(@game, 696, 236 + i * 48, update: ->)
+      player.body.allowGravity = false
+      player.body.immovable = true
+      player.fixedToCamera = true
+      player.scale.x = -1
+      @game.world.add(player)
+      players.push(player)
+    [@jumpPlayer, @punchPlayer, @leftWalkPlayer, @rightWalkPlayer] = players
+
+    @leftWalkPlayer.animations.play('walk')
+    @leftWalkPlayer.animations.next()
+
+    @rightWalkPlayer.animations.play('walk')
+    @rightWalkPlayer.scale.x = 1
+
+    @jumpPlayer.animations.play('stand')
+    @jumpPlayer.body.allowGravity = true
+    @jumpPlayer.body.gravity.y = 750
+    @jumpPlayer.fixedToCamera = false
+    @jumpPlayerX = @jumpPlayer.x
+    @jumpPlayerY = @jumpPlayer.y
+    @jumpTime = @game.time.now + 1000
+
+    @punchPlayer.animations.play('punch')
+    @punchTime = @game.time.now + 1000
 
     @key = @game.input.keyboard.addKey(Phaser.Keyboard.SPACEBAR)
 
   update: ->
+    @game.camera.x += @cameraSpeed * (@game.time.elapsed / 1000)
+    @game.camera.x %= 2000
+
+    if @jumpPlayer.body.y > @jumpPlayerY
+      @jumpPlayer.body.reset(@jumpPlayerX, @jumpPlayerY)
+      @jumpPlayer.animations.play('stand')
+    if @jumpTime < @game.time.now
+      @jumpTime = @game.time.now + 1000
+      @jumpPlayer.body.velocity.y = -300
+      @jumpPlayer.animations.play('walk')
+    @jumpPlayer.x = Math.floor(@game.camera.x + @jumpPlayerX)
+
+    if @punchTime < @game.time.now
+      @punchTime = @game.time.now + 1000
+      currentAnimName = @punchPlayer.animations.currentAnim.name
+      @punchPlayer.animations.play(
+        if currentAnimName == 'punch' then 'stand' else 'punch')
+
     @game.state.start('play') if @key.isDown
 
 
@@ -756,10 +807,11 @@ class PlayState extends Phaser.State
 
   farBackgroundScroll: 0.1
   nearBackgroundScroll: 0.3
+  worldGravity: 300
 
   create: ->
     @game.physics.startSystem(Phaser.Physics.ARCADE)
-    @game.physics.arcade.gravity.y = 300
+    @game.physics.arcade.gravity.y = @worldGravity
 
     # Create a bunch of groups so we can be sure things are ordered properly.
     # We store this as game.groups, too, so sprites and such can get to the
@@ -870,3 +922,4 @@ do ->
   game.state.add('menu', new MenuState())
   game.state.add('play', new PlayState())
   game.state.start('preload')
+  window.mutantsMustDie = game
